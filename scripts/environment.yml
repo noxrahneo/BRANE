@@ -1,0 +1,27 @@
+name: breast_cancer_scrnaseq
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - ipykernel
+  - jupyter
+  - matplotlib
+  - networkx
+  - numpy
+  - pandas
+  - python-igraph
+  - scanpy
+  - scikit-learn
+  - scipy
+  - seaborn
+  - leidenalg
+  - pyvis
+  - pip
+  - pip:
+    - lifelines==0.30.0
+    - decoupler==2.1.4
+    - gprofiler-official==1.0.0
+    - pyreadr==0.5.4
+    - requests==2.32.5
