@@ -1,15 +1,5 @@
-#!/usr/bin/env python3
-# flake8: noqa: E501
-"""Build drug-target candidate tables from cross-network recurring hub genes.
+"""Build drug-target candidate tables from DGIdb, ChEMBL/RxNorm synonym expansion, and composite scoring."""
 
-Pipeline summary:
-1) Load recurring hub genes from cross-network overlap (Script 40): D + S_case tiers, 2+ subtypes.
-2) For each recurring gene, attach weighted-degree and metadata from per-pair hub CSVs.
-3) Build a combined hub list restricted to cross-network recurring genes.
-4) Query DGIdb GraphQL for gene-drug interactions of these genes.
-5) Expand/merge drug synonyms using DGIdb aliases + ChEMBL + RxNorm.
-6) Rank candidate drugs by multi-factor score and write thesis-ready tables.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +26,7 @@ DEFAULT_OUTPUT_DIR = str(REPO_ROOT / "results/24_drug_targets")
 DEFAULT_SURVIVAL_PATH = str(REPO_ROOT / "results/23_survival/top_prognostic_genes.csv")
 DEFAULT_CROSS_NETWORK_PATH = str(REPO_ROOT / "results/27_cross_network/recurring_genes_all_tiers.csv")
 
-# DGIdb concept IDs with these prefixes are pharmacological compounds
+#dGIdb concept IDs with these prefixes are pharmacological compounds
 CHEMBL_CONCEPT_PREFIX = "chembl:"
 
 DGIDB_GRAPHQL_URL = "https://dgidb.org/api/graphql"
@@ -73,7 +63,7 @@ NON_ALNUM_RE = re.compile(r"[^A-Z0-9]+")
 
 @dataclass
 class PairInputFiles:
-    """Resolved input files for one case-vs-control pair."""
+    #resolved input files for one case-vs-control pair
 
     pair_name: str
     edges_csv: Path
@@ -81,7 +71,7 @@ class PairInputFiles:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments."""
+    #parse CLI arguments
     parser = argparse.ArgumentParser(
         description="Prioritize drug candidates targeting persistent-network hubs"
     )
@@ -164,14 +154,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def normalise_gene_key(text: Any) -> str:
-    """Upper-case stable key for gene joins."""
+    #upper-case stable key for gene joins
     if text is None:
         return ""
     return str(text).strip().upper()
 
 
 def normalise_drug_alias(text: Any) -> str:
-    """Normalize drug synonym strings for cross-source matching."""
+    #normalize drug synonym strings for cross-source matching
     if text is None:
         return ""
     s = str(text).strip().upper()
@@ -183,7 +173,7 @@ def normalise_drug_alias(text: Any) -> str:
 
 
 def ensure_dir(path: Path) -> None:
-    """Create directory tree if missing."""
+    #create directory tree if missing
     path.mkdir(parents=True, exist_ok=True)
 
 
@@ -201,7 +191,7 @@ LFC_DIR = REPO_ROOT / "results/20_node_annotation/03_output_with_lfc"
 
 
 def discover_pair_inputs(networks_root: Path) -> list[PairInputFiles]:
-    """Find pair directories with hub CSVs for D and S_case tiers."""
+    #find pair directories with hub CSVs for D and S_case tiers
     node_annot_root = REPO_ROOT / "results/20_node_annotation"
     out: list[PairInputFiles] = []
     for pair_name, short in PAIR_SHORT.items():
@@ -213,7 +203,7 @@ def discover_pair_inputs(networks_root: Path) -> list[PairInputFiles]:
         if not tagged_csv.exists():
             logging.warning("Skipping %s (tagged CSV missing)", pair_name)
             continue
-        # Use differential edges from CSD network for metadata (edges not used for hub ranking)
+        #use differential edges from CSD network for metadata (edges not used for hub ranking)
         edge_csv = CSD_NETWORKS_DIR / pair_name / f"{pair_name}_differential_edges_permutation.csv"
         if not edge_csv.exists():
             logging.warning("Skipping %s (edge CSV missing)", pair_name)
@@ -225,7 +215,7 @@ def discover_pair_inputs(networks_root: Path) -> list[PairInputFiles]:
 
 
 def compute_weighted_degrees(edges_df: pd.DataFrame) -> pd.DataFrame:
-    """Compute weighted degree per gene from persistent edge table."""
+    #compute weighted degree per gene from persistent edge table
     required = {"gene_a", "gene_b", "weight"}
     if not required.issubset(edges_df.columns):
         raise ValueError(f"Edge CSV missing required columns: {required}")
@@ -259,7 +249,7 @@ def compute_weighted_degrees(edges_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_gene_metadata_index(tagged_df: pd.DataFrame) -> dict[str, dict[str, Any]]:
-    """Index tagged metadata by both original and approved symbol."""
+    #index tagged metadata by both original and approved symbol
     index: dict[str, dict[str, Any]] = {}
     for row in tagged_df.to_dict(orient="records"):
         row_dict = {str(k): v for k, v in row.items()}
@@ -277,7 +267,7 @@ def attach_metadata(
     top_hubs_df: pd.DataFrame,
     tagged_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Attach cancer and annotation metadata to pair hub table."""
+    #attach cancer and annotation metadata to pair hub table
     if top_hubs_df.empty:
         return pd.DataFrame()
 
@@ -307,7 +297,7 @@ def attach_metadata(
 
 
 def aggregate_combined_hubs(pair_hubs_df: pd.DataFrame, top_hubs: int) -> pd.DataFrame:
-    """Aggregate per-pair hub ranks into one combined top-hub table."""
+    #aggregate per-pair hub ranks into one combined top-hub table
     if pair_hubs_df.empty:
         return pd.DataFrame()
 
@@ -345,14 +335,14 @@ def aggregate_combined_hubs(pair_hubs_df: pd.DataFrame, top_hubs: int) -> pd.Dat
         ascending=[False, False, False, True],
     ).reset_index(drop=True)
     out["combined_rank"] = out.index + 1
-    # Return the full unique set — the top_hubs cap applies only per-pair, not to the
+    #return the full unique set — the top_hubs cap applies only per-pair, not to the
     # combined aggregation. Capping here would silently discard hub genes from pairs
     # with low overlap and skew the drug query toward a subset of network conditions.
     return out
 
 
 def first_nonempty(values: list[Any]) -> str:
-    """Return first non-empty string-like value."""
+    #return first non-empty string-like value
     for value in values:
         if value is None:
             continue
@@ -363,7 +353,7 @@ def first_nonempty(values: list[Any]) -> str:
 
 
 def load_cross_network_genes(cross_network_path: Path) -> set[str]:
-    """Return uppercase gene names recurring in 2+ subtypes in D or S_case tiers."""
+    #return uppercase gene names recurring in 2+ subtypes in D or S_case tiers
     if not cross_network_path.exists():
         raise FileNotFoundError(
             f"Cross-network overlap output not found: {cross_network_path}\n"
@@ -385,7 +375,7 @@ def safe_request_json(
     timeout: int,
     **kwargs: Any,
 ) -> dict[str, Any] | None:
-    """HTTP helper with logging and graceful failure."""
+    #hTTP helper with logging and graceful failure
     try:
         response = session.request(method=method, url=url, timeout=timeout, **kwargs)
         response.raise_for_status()
@@ -403,7 +393,7 @@ def fetch_dgidb_interactions_for_gene(
     timeout: int,
     sleep_seconds: float,
 ) -> list[dict[str, Any]]:
-    """Fetch DGIdb interactions for one gene with cursor pagination."""
+    #fetch DGIdb interactions for one gene with cursor pagination
     all_rows: list[dict[str, Any]] = []
     after: str | None = None
     pages = 0
@@ -449,7 +439,7 @@ def fetch_dgidb_interactions_for_gene(
 
 
 def extract_chembl_ids(texts: list[str]) -> set[str]:
-    """Extract CHEMBL IDs from alias strings."""
+    #extract CHEMBL IDs from alias strings
     out: set[str] = set()
     for text in texts:
         for match in CHEMBL_ID_RE.findall(str(text)):
@@ -463,7 +453,7 @@ def fetch_chembl_synonyms(
     cache_dir: Path,
     timeout: int,
 ) -> set[str]:
-    """Get synonym set from one ChEMBL molecule, with local JSON cache."""
+    #get synonym set from one ChEMBL molecule, with local JSON cache
     ensure_dir(cache_dir)
     cache_file = cache_dir / f"chembl_{chembl_id.upper()}.json"
 
@@ -506,7 +496,7 @@ def fetch_rxnorm_synonyms(
     cache_dir: Path,
     timeout: int,
 ) -> set[str]:
-    """Fetch RxNorm lexical variants for a drug name, with local cache."""
+    #fetch RxNorm lexical variants for a drug name, with local cache
     ensure_dir(cache_dir)
     cache_key = normalise_drug_alias(drug_name).replace(" ", "_")
     cache_file = cache_dir / f"rxnorm_{cache_key}.json"
@@ -546,7 +536,7 @@ def fetch_rxnorm_synonyms(
 
 
 class UnionFind:
-    """Union-find for synonym-overlap merging of drug identities."""
+    #union-find for synonym-overlap merging of drug identities
 
     def __init__(self) -> None:
         self.parent: dict[str, str] = {}
@@ -574,25 +564,10 @@ class UnionFind:
 
 
 def load_survival_genes(survival_path: str) -> set[str]:
-    """Load FDR-significant prognostic hub genes from Script 62 output.
+    #load fdr-significant prognostic hub genes from 39_survival_analysis.py output
 
     Returns an uppercase set of gene symbols. Returns empty set if file is missing.
-    """
-    p = Path(survival_path)
-    if not p.exists():
-        logging.warning("Survival file not found: %s — survival bonus will be 0 for all drugs", p)
-        return set()
-    df = pd.read_csv(p)
-    if "gene" not in df.columns:
-        logging.warning("Survival file missing 'gene' column — survival bonus disabled")
-        return set()
-    genes = set(df["gene"].dropna().str.upper().tolist())
-    logging.info("Loaded %d FDR<0.1 prognostic genes from %s", len(genes), p)
-    return genes
-
-
-def rank_drug_groups(group_df: pd.DataFrame, survival_genes: set[str] | None = None) -> pd.DataFrame:
-    """Compute final ranking score for merged drug candidates.
+    #p = Path(survival_path)Compute final ranking score for merged drug candidates.
 
     All count-based terms are normalised to [0, 1] before weighting so that
     no single dimension dominates due to its natural scale:
@@ -626,7 +601,7 @@ def rank_drug_groups(group_df: pd.DataFrame, survival_genes: set[str] | None = N
     work["interactions_count"] = pd.to_numeric(work["interactions_count"], errors="coerce").fillna(0)
     work["pair_coverage"] = pd.to_numeric(work["pair_coverage"], errors="coerce").fillna(0)
 
-    # --- Normalise all terms to [0, 1] before weighting ---
+    #normalise all scoring terms to [0, 1] before weighting
     hub_max = work["hub_genes_targeted"].max()
     hub_norm = work["hub_genes_targeted"] / hub_max if hub_max > 0 else work["hub_genes_targeted"] * 0.0
 
@@ -638,7 +613,7 @@ def rank_drug_groups(group_df: pd.DataFrame, survival_genes: set[str] | None = N
 
     norm_interaction = work["mean_interaction_score"] / (work["mean_interaction_score"] + 1.0)
 
-    # Survival bonus: proportion of targeted hub genes that are FDR-significant prognostic
+    #survival bonus: proportion of targeted hub genes that are FDR-significant prognostic
     def _survival_fraction(targeted_str: str) -> float:
         if not isinstance(targeted_str, str) or not targeted_str.strip():
             return 0.0
@@ -649,7 +624,7 @@ def rank_drug_groups(group_df: pd.DataFrame, survival_genes: set[str] | None = N
 
     work["survival_fraction"] = work["targeted_hub_genes"].apply(_survival_fraction)
 
-    # Annotation columns (no scoring weight — for biological interpretation)
+    #annotation columns (no scoring weight — for biological interpretation)
     def _prognostic_genes(targeted_str: str) -> str:
         if not isinstance(targeted_str, str) or not targeted_str.strip():
             return ""
@@ -679,7 +654,7 @@ def rank_drug_groups(group_df: pd.DataFrame, survival_genes: set[str] | None = N
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
-    """Run full hub->drug candidate pipeline and write outputs."""
+    #run full hub->drug candidate pipeline and write outputs
     networks_root = resolve_base(str(args.networks_root))
     output_dir = resolve_base(str(args.output_dir))
     cache_dir = resolve_base(str(args.cache_dir))
@@ -705,7 +680,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 logging.warning("Skipping %s / %s (hub CSV missing)", pair.pair_name, tier)
                 continue
             hubs_df = pd.read_csv(hub_csv)
-            # Normalise column names to what attach_metadata expects
+            #normalise column names to what attach_metadata expects
             if "tier_degree" in hubs_df.columns and "weighted_degree" not in hubs_df.columns:
                 hubs_df = hubs_df.rename(columns={"tier_degree": "weighted_degree"})
             hubs_df["tier"] = tier
@@ -715,7 +690,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
     pair_hubs_df = pd.concat(pair_hub_tables, ignore_index=True) if pair_hub_tables else pd.DataFrame()
 
-    # Restrict to cross-network recurring genes (D+S_case, 2+ subtypes)
+    #restrict to cross-network recurring genes (D+S_case, 2+ subtypes)
     if not pair_hubs_df.empty and cross_network_genes:
         gene_upper = pair_hubs_df["gene"].astype(str).str.upper()
         appr_upper = pair_hubs_df.get("approved_symbol", pd.Series(dtype=str)).astype(str).str.upper()
@@ -1029,21 +1004,21 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
 
 _NON_DRUG_PATTERNS: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p in [
-    # Non-pharmaceutical entities
+    #non-pharmaceutical entities
     r"\(recombinant",          # recombinant protein replacement therapies
     r"^protein s$",            # endogenous anticoagulant, not a therapeutic
     r"^h2o2$",                 # hydrogen peroxide
     r"^glutamine$",            # amino acid supplement
     r"^glucarpidase$",         # enzyme rescue agent (methotrexate toxicity)
-    # Cardiovascular / non-oncology drug classes
+    #cardiovascular / non-oncology drug classes
     r"statin",                 # statins (atorvastatin, simvastatin, …)
-    r"pril\b",                 # ACE inhibitors (quinapril, enalapril, lisinopril, …)
+    r"pril\b",                 #ace inhibitors
     r"^warfarin",              # anticoagulant
-    # CNS / endocrine drugs
+    #cNS / endocrine drugs
     r"^haloperidol",           # antipsychotic
     r"^levodopa$",             # Parkinson's dopamine precursor
     r"^thyrotropin$",          # thyroid-stimulating hormone
-    # Topical-only corticosteroids (interact with ANXA1 but have no systemic oncology use)
+    #topical-only corticosteroids (interact with ANXA1 but have no systemic oncology use)
     r"^(?:desonide|halobetasol|alclometasone|loteprednol|prednicarbate|clocortolone"
     r"|rimexolone|desoximetasone|amcinonide|diflorasone|hydrocortamate|clobetasol"
     r"|flumethasone|fluocinolone|flurandrenolide|halcinonide)$",
@@ -1053,13 +1028,13 @@ _NON_DRUG_PATTERNS: list[re.Pattern[str]] = [re.compile(p, re.IGNORECASE) for p 
 
 
 def is_pharmacological_drug(name: str) -> bool:
-    """Return False for known non-drug or clearly off-topic entities."""
+    #return False for known non-drug or clearly off-topic entities
     n = str(name).strip()
     return not any(p.search(n) for p in _NON_DRUG_PATTERNS)
 
 
 def filter_non_drug_candidates(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove non-pharmaceutical entities from the ranked candidate table."""
+    #remove non-pharmaceutical entities from the ranked candidate table
     if df.empty:
         return df
     mask = df["canonical_drug_name"].apply(is_pharmacological_drug)
@@ -1070,7 +1045,7 @@ def filter_non_drug_candidates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def choose_group_name(group_keys: list[str], name_map: dict[str, str]) -> str:
-    """Pick stable display name for a merged drug group."""
+    #pick stable display name for a merged drug group
     names = [str(name_map.get(k, "")).strip() for k in group_keys]
     names = [n for n in names if n]
     if not names:
@@ -1080,7 +1055,7 @@ def choose_group_name(group_keys: list[str], name_map: dict[str, str]) -> str:
 
 
 def configure_logging() -> None:
-    """Set script logger format."""
+    #set script logger format
     logging.basicConfig(
         level=logging.INFO,
         format="[%(asctime)s] %(levelname)s %(message)s",
@@ -1088,8 +1063,8 @@ def configure_logging() -> None:
     )
 
 
-def main() -> None:
-    """CLI entrypoint."""
+def main() -> int:
+    #cLI entrypoint
     configure_logging()
     args = parse_args()
     summary = run_pipeline(args)
@@ -1103,6 +1078,7 @@ def main() -> None:
             summary.get("drug_candidates"),
         )
 
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

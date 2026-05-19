@@ -1,63 +1,5 @@
 #!/usr/bin/env python3
-"""
-Script 50: Add condition-level LFC (log-fold-change) to tagged gene tables.
-
-PURPOSE:
-Compute condition-level log-fold-change and directional categorization for each gene
-in each condition pair. This complements the network rewiring information with
-expression direction (UP / DOWN / STABLE) to create a complete characterisation:
-  - Network topology (hub status, rewiring) from Stage 04 CSD
-  - Cell-type annotation from Stage 09 tagging
-  - Condition-level expression direction from this script
-
-BIOLOGY:
-LFC is computed as log2((mean_test + ε) / (mean_ref + ε)) where:
-  - mean_test = mean expression across all cells in test condition
-  - mean_ref = mean expression across all cells in ref condition
-  - ε = 1 (pseudocount, standard for log-normalized count data)
-
-The pseudocount prevents:
-  1. Division by zero when ref expression is zero (occurs for ~10-20% of genes)
-  2. Log of zero when both are zero (mathematically undefined)
-  3. Systematic bias in log-space when one condition is sparse
-
-For log-normalized data (log(x+1) scale), adding 1 before LFC is consistent
-with the data scale and standard practice in RNA-seq analysis.
-
-DIRECTION CATEGORIES:
-  - UP:     LFC >= +0.5  (≥ 1.41-fold increase in expression)
-  - DOWN:   LFC <= -0.5  (≤ 0.71-fold decrease, i.e., ~41% reduction)
-  - STABLE: -0.5 < LFC < +0.5
-
-Rationale for ±0.5 threshold:
-  - Common in transcriptomic analysis (conservative but defensible)
-  - Equivalent to ~1.4-fold change in linear space
-  - Avoids over-splitting marginal cases
-  - Symmetric around zero for biological interpretability
-
-PIPELINE ORDER:
-1. Preflight: validate input CSVs and h5ad files exist
-2. For each pair:
-   a. Load tagged CSV (contains network genes for that pair)
-   b. Load test and reference h5ad files
-   c. Extract raw expression for network genes only
-   d. Compute mean_test and mean_ref (across ALL cells, ignoring cell type)
-   e. Compute LFC and direction
-   f. Append lfc, direction columns to tagged CSV
-   g. Write to output_with_lfc/
-3. Generate QC report: validate known genes against expected biology
-
-OUTPUT:
-New folder: results/20_node_annotation/03_output_with_lfc/
-  - 6 pair_tagged_with_lfc.csv (one per pair)
-  - lfc_validation_report.csv (QC checks on known genes)
-
-INVARIANTS:
-- All LFC values are numeric (no NA, no inf) due to pseudocount
-- All direction values are in {UP, DOWN, STABLE}
-- Original tagged columns preserved; LFC added as final columns
-- No mutation of input files or Stage 04 data
-"""
+"""Compute condition-level log-fold-change and directional category (UP/DOWN/STABLE) for network genes."""
 
 from __future__ import annotations
 
@@ -81,12 +23,12 @@ TAGGING_DIR = REPO_ROOT / "results" / "20_node_annotation"
 INPUT_TAGGED_DIR = TAGGING_DIR / "02_output"
 OUTPUT_WITH_LFC_DIR = TAGGING_DIR / "03_output_with_lfc"
 
-# Define all condition pairs and their corresponding h5ad file mappings
-# Using stage 03 integrated h5ad files (cell-level data with annotations)
+#define all condition pairs and their corresponding h5ad file mappings
+#using stage 03 integrated h5ad files (cell-level data with annotations)
 STAGE03_INTEGRATION_DIR = REPO_ROOT / "results" / "03_integration" / "integrated"
 
 CONDITION_PAIRS = [
-    # (pair_name, test_condition, ref_condition, test_h5ad, ref_h5ad)
+    #(pair_name, test_condition, ref_condition, test_h5ad, ref_h5ad)
     (
         "ER_tumor__vs__Normal",
         "ER_tumor",
@@ -131,8 +73,8 @@ CONDITION_PAIRS = [
     ),
 ]
 
-# Known genes for QC sanity checks
-# Format: (gene_name, expected_direction_in_tumor, biological_role)
+#known genes for QC sanity checks
+#format: (gene_name, expected_direction_in_tumor, biological_role)
 QC_GENES = [
     ("ESR1", "UP", "ER positive tumour marker; upregulated in ER_tumor"),
     ("ERBB2", "UP", "HER2 tumour marker; upregulated in HER2_tumor"),
@@ -141,13 +83,13 @@ QC_GENES = [
     ("ACTB", "STABLE", "Housekeeping control; should be stable across conditions"),
 ]
 
-PSEUDOCOUNT = 1.0  # Standard for log-normalized count data
+PSEUDOCOUNT = 1.0  #standard for log-normalized count data
 LFC_UP_THRESHOLD = 0.5  # ≥ ~1.4-fold increase
 LFC_DOWN_THRESHOLD = -0.5  # ≤ ~0.71-fold decrease
 
 
 def _read_h5ad_safe(path: Path) -> sc.AnnData:
-    """Read h5ad, working around uns/log1p version incompatibility in older files."""
+    #read h5ad, working around uns/log1p version incompatibility in older files
     try:
         return sc.read_h5ad(path)
     except Exception:
@@ -184,7 +126,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 50: Add condition-level LFC to tagged gene tables"
+        description="Add condition-level LFC to tagged gene tables"
     )
     parser.add_argument(
         "--preflight-only",
@@ -200,10 +142,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_preflight() -> list[PreflightResult]:
-    """Validate all input files and report structure."""
-    logging.info("=" * 80)
+    #validate all input files and report structure
     logging.info("PREFLIGHT: Validating input files and data structure")
-    logging.info("=" * 80)
 
     results = []
     for pair_name, _, _, test_h5ad, ref_h5ad in CONDITION_PAIRS:
@@ -242,7 +182,7 @@ def run_preflight() -> list[PreflightResult]:
         )
         results.append(result)
 
-        status = "✓" if all_exists else "✗"
+        status = "ok" if all_exists else "fail"
         logging.info(
             f"{status} {pair_name}: "
             f"CSV={tagged_genes} genes, "
@@ -261,21 +201,15 @@ def compute_lfc_for_pair(
     ref_h5ad: Path,
     output_dir: Path,
 ) -> dict[str, Any]:
-    """
-    Compute LFC and direction for a single condition pair.
-
-    Returns:
-        Dictionary with keys: success, genes_processed, genes_missing_expr,
-        error_message (if applicable)
-    """
+    #compute LFC and direction for a single condition pair
     logging.info(f"\n--- Processing pair: {pair_name} ---")
 
-    # Load input tagged CSV
+    #load input tagged CSV
     tagged_csv = INPUT_TAGGED_DIR / f"{pair_name}_tagged.csv"
     df_tagged = pd.read_csv(tagged_csv)
     logging.info(f"Loaded {len(df_tagged)} genes from {tagged_csv.name}")
 
-    # Load h5ad files
+    #load h5ad files
     logging.info(f"Loading test condition h5ad: {test_h5ad.name}")
     adata_test = _read_h5ad_safe(test_h5ad)
     logging.info(
@@ -290,11 +224,11 @@ def compute_lfc_for_pair(
         f"layer: {adata_ref.layers.keys() if adata_ref.layers else 'none'}"
     )
 
-    # Extract gene names from tagged table
+    #extract gene names from tagged table
     network_genes = df_tagged["gene"].values
     logging.info(f"Extracting expression for {len(network_genes)} network genes")
 
-    # Find intersection of network genes with h5ad gene names
+    #find intersection of network genes with h5ad gene names
     test_genes_idx = [i for i, g in enumerate(adata_test.var_names) if g in network_genes]
     ref_genes_idx = [i for i, g in enumerate(adata_ref.var_names) if g in network_genes]
 
@@ -307,8 +241,8 @@ def compute_lfc_for_pair(
         f"common={len(genes_common)}"
     )
 
-    # Extract expression matrices from raw counts if available, otherwise use X
-    # This ensures we compute LFC on raw counts, not pre-normalized log data
+    #extract expression matrices from raw counts if available, otherwise use X
+    #this ensures we compute LFC on raw counts, not pre-normalized log data
     if 'counts' in adata_test.layers:
         X_test = adata_test.layers['counts']
         logging.info("Using 'counts' layer from test condition h5ad")
@@ -323,13 +257,13 @@ def compute_lfc_for_pair(
         X_ref = adata_ref.X
         logging.info("Using default X layer from ref condition h5ad (note: may be pre-normalized)")
 
-    # Convert sparse to dense if needed (safer for mean computation)
+    #convert sparse to dense if needed (safer for mean computation)
     if sparse.issparse(X_test):
         X_test = X_test.toarray()
     if sparse.issparse(X_ref):
         X_ref = X_ref.toarray()
 
-    # Compute condition-level means for all network genes
+    #compute condition-level means for all network genes
     lfc_values = []
     direction_values = []
     genes_missing = []
@@ -337,7 +271,7 @@ def compute_lfc_for_pair(
     for gene in network_genes:
         gene_found = False
 
-        # Find gene in test condition
+        #find gene in test condition
         try:
             test_idx = list(adata_test.var_names).index(gene)
             mean_test = X_test[:, test_idx].mean()
@@ -346,7 +280,7 @@ def compute_lfc_for_pair(
             mean_test = np.nan
             genes_missing.append((gene, "not_in_test"))
 
-        # Find gene in ref condition
+        #find gene in ref condition
         try:
             ref_idx = list(adata_ref.var_names).index(gene)
             mean_ref = X_ref[:, ref_idx].mean()
@@ -356,7 +290,7 @@ def compute_lfc_for_pair(
             if gene not in genes_missing:
                 genes_missing.append((gene, "not_in_ref"))
 
-        # Compute LFC with pseudocount
+        #compute LFC with pseudocount
         if np.isnan(mean_test) or np.isnan(mean_ref):
             lfc = np.nan
             direction = "Unknown"
@@ -372,19 +306,19 @@ def compute_lfc_for_pair(
         lfc_values.append(lfc)
         direction_values.append(direction)
 
-    # Add new columns to tagged dataframe
-    df_tagged["mean_expr_test"] = np.nan  # Placeholder; can expand if needed
-    df_tagged["mean_expr_ref"] = np.nan  # Placeholder; can expand if needed
+    #add new columns to tagged dataframe
+    df_tagged["mean_expr_test"] = np.nan  #placeholder; can expand if needed
+    df_tagged["mean_expr_ref"] = np.nan  #placeholder; can expand if needed
     df_tagged["lfc"] = lfc_values
     df_tagged["direction"] = direction_values
 
-    # Write output
+    #write output
     output_dir.mkdir(parents=True, exist_ok=True)
     output_csv = output_dir / f"{pair_name}_tagged_with_lfc.csv"
     df_tagged.to_csv(output_csv, index=False)
-    logging.info(f"✓ Wrote {len(df_tagged)} genes to {output_csv.name}")
+    logging.info(f"wrote {len(df_tagged)} genes to {output_csv.name}")
 
-    # Summary stats
+    #summary stats
     direction_counts = pd.Series(direction_values).value_counts().to_dict()
     logging.info(f"Direction breakdown: {direction_counts}")
 
@@ -398,14 +332,8 @@ def compute_lfc_for_pair(
 
 
 def validate_known_genes(output_dir: Path) -> None:
-    """
-    QC check: validate LFC of known genes against expected biology.
-
-    Writes: lfc_validation_report.csv to output_dir
-    """
-    logging.info("\n" + "=" * 80)
+    #qC check: validate LFC of known genes against expected biology
     logging.info("QC VALIDATION: Checking known genes against expected biology")
-    logging.info("=" * 80)
 
     validation_rows = []
 
@@ -420,7 +348,7 @@ def validate_known_genes(output_dir: Path) -> None:
         logging.info(f"\n--- Pair: {pair_name} (test={test_cond} vs ref={ref_cond}) ---")
 
         for gene_name, expected_dir, description in QC_GENES:
-            # Find gene in this pair's output
+            #find gene in this pair's output
             gene_rows = df[df["gene"] == gene_name]
 
             if len(gene_rows) == 0:
@@ -440,7 +368,7 @@ def validate_known_genes(output_dir: Path) -> None:
             direction = gene_rows.iloc[0]["direction"]
             match = direction == expected_dir
 
-            status = "✓" if match else "✗"
+            status = "ok" if match else "fail"
             logging.info(
                 f"  {status} {gene_name:8s}: "
                 f"LFC={lfc:+7.3f} ({direction:7s}) "
@@ -457,13 +385,13 @@ def validate_known_genes(output_dir: Path) -> None:
                 "status": "match" if match else "mismatch",
             })
 
-    # Write validation report
+    #write validation report
     df_validation = pd.DataFrame(validation_rows)
     report_csv = output_dir / "lfc_validation_report.csv"
     df_validation.to_csv(report_csv, index=False)
     logging.info(f"\n✓ Wrote validation report to {report_csv.name}")
 
-    # Summary
+    #summary
     match_count = (df_validation["status"] == "match").sum()
     mismatch_count = (df_validation["status"] == "mismatch").sum()
     na_count = (df_validation["status"] == "not_in_network").sum()
@@ -473,60 +401,40 @@ def validate_known_genes(output_dir: Path) -> None:
     )
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
     configure_logging(verbose=args.verbose)
 
-    logging.info("Script 50: Add condition-level LFC to tagged gene tables")
-    logging.info(f"Configuration:")
-    logging.info(f"  PSEUDOCOUNT (ε) = {PSEUDOCOUNT}")
-    logging.info(f"  LFC UP threshold = {LFC_UP_THRESHOLD}")
-    logging.info(f"  LFC DOWN threshold = {LFC_DOWN_THRESHOLD}")
+    logging.info("computing condition-level lfc for network genes")
+    logging.info(f"pseudocount={PSEUDOCOUNT}, up_threshold={LFC_UP_THRESHOLD}, down_threshold={LFC_DOWN_THRESHOLD}")
 
-    # Preflight validation
+    #preflight validation
     preflight_results = run_preflight()
     all_ok = all(r.all_exists for r in preflight_results)
 
     if not all_ok:
-        logging.error("⚠ Preflight validation found missing files. Aborting.")
+        logging.error("preflight validation found missing files, aborting")
         for r in preflight_results:
             if not r.all_exists:
-                logging.error(
-                    f"  {r.pair_name}: "
-                    f"CSV={r.tagged_csv_exists}, "
-                    f"test={r.test_h5ad_exists}, "
-                    f"ref={r.ref_h5ad_exists}"
-                )
-        return
+                logging.error(f"  {r.pair_name}: CSV={r.tagged_csv_exists}, test={r.test_h5ad_exists}, ref={r.ref_h5ad_exists}")
+        return 1
 
     if args.preflight_only:
-        logging.info("Preflight validation passed. Exiting (--preflight-only).")
-        return
+        logging.info("preflight passed, exiting (--preflight-only)")
+        return 0
 
-    # Main processing
-    logging.info("\n" + "=" * 80)
-    logging.info("MAIN: Computing LFC for all condition pairs")
-    logging.info("=" * 80)
-
+    #compute lfc for all condition pairs
     output_with_lfc_dir = OUTPUT_WITH_LFC_DIR
     results = []
-
     for pair_name, test_cond, ref_cond, test_h5ad, ref_h5ad in CONDITION_PAIRS:
-        result = compute_lfc_for_pair(
-            pair_name, test_cond, ref_cond, test_h5ad, ref_h5ad, output_with_lfc_dir
-        )
-        results.append(result)
+        results.append(compute_lfc_for_pair(pair_name, test_cond, ref_cond, test_h5ad, ref_h5ad, output_with_lfc_dir))
 
-    # QC validation
+    #qc validation against known genes
     validate_known_genes(output_with_lfc_dir)
 
-    # Final summary
-    logging.info("\n" + "=" * 80)
-    logging.info("COMPLETE: LFC computation finished")
-    logging.info("=" * 80)
-    logging.info(f"Output folder: {output_with_lfc_dir}")
-    logging.info(f"Generated {len(results)} pair tables + validation report")
+    logging.info(f"done. {len(results)} pair tables written to {output_with_lfc_dir}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

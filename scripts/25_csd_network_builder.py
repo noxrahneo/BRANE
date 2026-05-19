@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # flake8: noqa: E501
-"""Stage-09 branch B network builder from permutation thresholds."""
+"""Build CSD differential networks from permutation-derived C/S/D thresholds."""
 
 from __future__ import annotations
 
@@ -22,21 +22,21 @@ from utils.network_utils import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build stage-09 permutation-thresholded networks")
+    parser = argparse.ArgumentParser(description="Build permutation-thresholded CSD networks")
     parser.add_argument(
         "--shared-dir",
         default="results/12_csd_scoring",
-        help="Union-capable upstream output directory from script 28a",
+        help="CSD scoring output directory from 23_csd_scoring.py",
     )
     parser.add_argument(
         "--threshold-dir",
         default="results/13_csd_thresholds",
-        help="Permutation threshold output directory from script 30a",
+        help="Permutation threshold output directory from 24_csd_permutation_thresholds.py",
     )
     parser.add_argument(
         "--output-dir",
         default="results/14_csd_networks",
-        help="Output directory for union-capable stage-09 branch B",
+        help="Output directory for built CSD networks",
     )
     parser.add_argument(
         "--pair",
@@ -76,13 +76,13 @@ def run_pair(
     if not all_values_file.exists() or not gene_change_file.exists() or not threshold_file.exists():
         raise FileNotFoundError(f"Missing required files for {pair_name}")
 
+    #load condition-specific genes (present in only one condition)
     condition_specific_genes: set[str] = set()
     if presence_file.exists():
         pres_df = pd.read_csv(presence_file)
-        condition_specific_genes = set(
-            pres_df.loc[pres_df["presence"] != "shared", "gene"].astype(str).tolist()
-        )
+        condition_specific_genes = set(pres_df.loc[pres_df["presence"] != "shared", "gene"].astype(str).tolist())
 
+    #load allvalues and apply permutation thresholds to select edges
     all_values = pd.read_csv(all_values_file, sep="\t")
     thresholds = pd.read_json(threshold_file, typ="series")
 
@@ -94,14 +94,11 @@ def run_pair(
     edges_df = all_values.loc[keep].copy().reset_index(drop=True)
 
     if not edges_df.empty:
+        #classify edges and relabel condition-specific C edges as S
+        #(gene absent in one condition fills rho_other=0, making C==S; argmax picks C but semantically these are S)
         labels, sel_value = classify_edges_no_threshold(
-            edges_df["C"].to_numpy(),
-            edges_df["S"].to_numpy(),
-            edges_df["D"].to_numpy(),
-        )
+            edges_df["C"].to_numpy(), edges_df["S"].to_numpy(), edges_df["D"].to_numpy())
         edges_df["link_type"] = labels
-        # Condition-specific edges: gene present in only one condition has rho_other=0 (filled),
-        # so C and S scores are equal; argmax breaks ties to C, but semantically these are S.
         edges_df["selected_value"] = sel_value
         if condition_specific_genes:
             csg_mask = (
@@ -109,48 +106,26 @@ def run_pair(
                 & (edges_df["gene_a"].isin(condition_specific_genes) | edges_df["gene_b"].isin(condition_specific_genes))
             )
             edges_df.loc[csg_mask, "link_type"] = "S"
-            # selected_value for relabeled edges: since C==S for these pairs, S col equals C col
+            #s col equals c col for these pairs since c==s when rho_other=0
             edges_df.loc[csg_mask, "selected_value"] = edges_df.loc[csg_mask, "S"]
         edges_df["weight"] = edges_df["selected_value"]
         edges_df["delta_r"] = edges_df["rho_case"] - edges_df["rho_control"]
         edges_df = edges_df[
-            [
-                "gene_a",
-                "gene_b",
-                "weight",
-                "rho_case",
-                "rho_control",
-                "delta_r",
-                "C",
-                "S",
-                "D",
-                "link_type",
-                "selected_value",
-            ]
+            ["gene_a", "gene_b", "weight", "rho_case", "rho_control", "delta_r", "C", "S", "D", "link_type", "selected_value"]
         ].sort_values(["selected_value", "weight"], ascending=False).reset_index(drop=True)
         n_edges_pre_topk = int(edges_df.shape[0])
         if int(analysis_top_k) > 0:
             edges_df = edges_df.head(int(analysis_top_k)).copy().reset_index(drop=True)
     else:
         edges_df = pd.DataFrame(
-            columns=[
-                "gene_a",
-                "gene_b",
-                "weight",
-                "rho_case",
-                "rho_control",
-                "delta_r",
-                "C",
-                "S",
-                "D",
-                "link_type",
-                "selected_value",
-            ]
+            columns=["gene_a", "gene_b", "weight", "rho_case", "rho_control", "delta_r", "C", "S", "D", "link_type", "selected_value"]
         )
         n_edges_pre_topk = 0
 
+    #augment with wto overlap scores
     edges_df, wto_edges_df, node_avg_wto = augment_edges_with_wto(edges_df)
 
+    #save edge tables
     pair_out = out_root / pair_name
     pair_out.mkdir(parents=True, exist_ok=True)
 
@@ -159,6 +134,7 @@ def run_pair(
     edges_df.to_csv(edges_file, index=False)
     wto_edges_df.to_csv(wto_edges_file, sep="\t", index=False)
 
+    #compute node topology metrics, hubs, and leiden modules
     gene_change_df = pd.read_csv(gene_change_file)
     network_payload = compute_node_and_network_metrics(
         edges_df=edges_df,
@@ -173,6 +149,7 @@ def run_pair(
     modules_df = cast(pd.DataFrame, network_payload["modules_df"])
     network_metrics = cast(dict[str, Any], network_payload["network_metrics"])
 
+    #save node, hub, module, and csd-split edge files
     nodes_file = pair_out / f"{pair_name}_node_homogeneity_permutation.csv"
     hubs_file = pair_out / f"{pair_name}_top_hubs_permutation.csv"
     modules_file = pair_out / f"{pair_name}_leiden_modules.tsv"
@@ -217,13 +194,16 @@ def run_pair(
     return summary
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output dir
     shared_root = resolve_base(args.shared_dir)
     threshold_root = resolve_base(args.threshold_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #discover pair dirs and filter to requested subset if specified
     pair_dirs = sorted([p for p in shared_root.iterdir() if p.is_dir() and "__vs__" in p.name])
     if args.pair:
         keep = set(args.pair)
@@ -232,22 +212,20 @@ def main() -> None:
     if not pair_dirs:
         raise ValueError("No pair directories found to process")
 
+    #build network for each pair
     summaries: list[dict[str, object]] = []
     for pair_dir in pair_dirs:
-        summaries.append(
-            run_pair(
-                pair_dir=pair_dir,
-                threshold_root=threshold_root,
-                out_root=out_root,
-                top_hubs=int(args.top_hubs),
-                analysis_top_k=int(args.analysis_top_k),
-            )
-        )
+        summaries.append(run_pair(
+            pair_dir=pair_dir, threshold_root=threshold_root, out_root=out_root,
+            top_hubs=int(args.top_hubs), analysis_top_k=int(args.analysis_top_k),
+        ))
 
+    #write combined summary csv
     pd.DataFrame(summaries).sort_values("pair").to_csv(out_root / "differential_permutation_summary.csv", index=False)
     total = round(sum(s.get("elapsed_seconds", 0) for s in summaries), 2)
     print(f"Done. Total elapsed: {total}s. Outputs: {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

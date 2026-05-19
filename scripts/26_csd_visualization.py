@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # flake8: noqa: E501
-"""Union network zone visualization — styled to match 32_stage09_network_visualization.py.
+"""Union network zone visualization for CSD differential network outputs.
 
 Figure layout per condition pair (large portrait format):
 ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ import pandas as pd
 
 from utils.network_utils import resolve_base
 
-# ── visual constants ──────────────────────────────────────────────────────────
+#visual constants
 EDGE_COLORS = {"C": "#2b6fb0", "S": "#2a9d8f", "D": "#e63946"}
 
 _MODULE_PALETTE = [
@@ -60,7 +60,7 @@ TOP_LABEL_FULL = 20                  # hub genes labelled in full network
 TOP_LABEL_MODULE = 8                 # hub genes labelled in each module panel
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+#helpers
 def module_color(mod_id: int) -> str:
     return _MODULE_PALETTE[(int(mod_id) - 1) % len(_MODULE_PALETTE)]
 
@@ -97,12 +97,7 @@ def top_module_list(g: nx.Graph, mod_map: dict[str, int], n: int) -> list[tuple[
 
 
 def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7) -> dict[str, tuple[float, float]]:
-    """Communities arranged via spring layout on inter-module graph; spring within each community.
-
-    Module centroids are positioned by running spring layout on a contracted meta-graph
-    (one super-node per module, edges weighted by inter-module connectivity), so tightly
-    connected modules cluster together rather than being placed on an arbitrary ring.
-    """
+    #spring layout on contracted meta-graph for module centroids; spring within each module
     buckets: dict[int, list[str]] = {}
     for node, mod in node_to_module.items():
         if node in g:
@@ -116,7 +111,7 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
         sub_pos = nx.spring_layout(g.subgraph(nodes), seed=seed, weight="weight", iterations=80)
         return dict(sub_pos)
 
-    # build contracted meta-graph: one node per module, edges = total inter-module weight
+    #build contracted meta-graph: one node per module, edges = total inter-module weight
     node_to_mod = {n: m for m, nodes in mods for n in nodes}
     meta = nx.Graph()
     for m, _ in mods:
@@ -135,7 +130,7 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
     k_meta = spread / math.sqrt(n_mods)
     meta_pos_raw = nx.spring_layout(meta, seed=seed, weight="weight", k=k_meta, iterations=150)
 
-    # rescale meta positions to fill spread
+    #rescale meta positions to fill spread
     xs = [x for x, y in meta_pos_raw.values()]
     ys = [y for x, y in meta_pos_raw.values()]
     x_range = max(xs) - min(xs) or 1.0
@@ -143,7 +138,7 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
     scale = spread / max(x_range, y_range)
     centres: dict[int, tuple[float, float]] = {m: (x * scale, y * scale) for m, (x, y) in meta_pos_raw.items()}
 
-    # module footprint: larger footprint fills canvas; allow up to 65% of avg inter-centroid gap
+    #module footprint: allow up to 65% of avg inter-centroid gap
     max_mod_scale = spread / (1.5 * math.sqrt(n_mods))
 
     pos: dict[str, tuple[float, float]] = {}
@@ -195,7 +190,7 @@ def top_hub_genes(g: nx.Graph, n: int) -> list[str]:
     return sorted(dw, key=lambda x: dw[x], reverse=True)[:n]
 
 
-# ── draw: full network panel ──────────────────────────────────────────────────
+#draw: full network panel
 def draw_full_network(
     ax: plt.Axes,
     g_full: nx.Graph,
@@ -208,7 +203,7 @@ def draw_full_network(
         ax.axis("off")
         return
 
-    # keep only nodes belonging to modules large enough to be meaningful
+    #keep only nodes belonging to modules large enough to be meaningful
     mod_sizes: dict[int, int] = {}
     for mod in node_to_module.values():
         mod_sizes[mod] = mod_sizes.get(mod, 0) + 1
@@ -217,7 +212,7 @@ def draw_full_network(
     display_nodes = {n for n, mid in node_to_module.items() if mid in large_mod_ids and n in g_full}
 
     g_display = g_full.subgraph(display_nodes).copy()
-    # remove singletons and doubletons (isolated or 2-node components after module filter)
+    #remove singletons and 2-node components after module filter
     small_comp_nodes = [n for comp in nx.connected_components(g_display) if len(comp) <= 2 for n in comp]
     if small_comp_nodes:
         g_display = g_display.copy()
@@ -236,14 +231,14 @@ def draw_full_network(
     print(f"    community layout…", flush=True)
     pos = community_layout(g_display, mod_display, seed=seed)
 
-    # draw ALL edges within the display subgraph (no cap — modules are already filtered)
+    #draw all edges within the display subgraph (modules are already filtered)
     for csd_type, color in EDGE_COLORS.items():
         elist = [(u, v) for u, v, d in g_display.edges(data=True) if d.get("link_type") == csd_type]
         if elist:
             nx.draw_networkx_edges(g_display, pos, edgelist=elist, ax=ax,
                                    edge_color=color, alpha=0.25, width=0.5)
 
-    # nodes coloured by Leiden module, sized by weighted degree
+    #nodes coloured by leiden module, sized by weighted degree
     sizes     = degree_scaled_sizes(g_display, lo=20.0, hi=220.0)
     node_list = list(g_display.nodes())
     colors    = [module_color(mod_display.get(n, 0)) for n in node_list]
@@ -252,7 +247,7 @@ def draw_full_network(
                            node_color=colors, node_size=sz, alpha=0.88,
                            linewidths=0.3, edgecolors="#ffffff")
 
-    # hub gene labels (top hubs within the display graph)
+    #hub gene labels for top hubs within the display graph
     hubs   = top_hub_genes(g_display, TOP_LABEL_FULL)
     labels = {n: n for n in hubs if n in pos}
     nx.draw_networkx_labels(g_display, pos, labels=labels, ax=ax,
@@ -267,7 +262,7 @@ def draw_full_network(
         stats_line += f"  |  {n_small_removed} singletons/pairs excluded"
     title_text = (heading + "\n" + stats_line) if heading else stats_line
     ax.set_title(title_text, fontsize=8.5, pad=5)
-    # tighten axis limits to actual data extent (no extra matplotlib padding)
+    #tighten axis limits to actual data extent
     all_x = [v[0] for v in pos.values()]
     all_y = [v[1] for v in pos.values()]
     x_pad = (max(all_x) - min(all_x)) * 0.04
@@ -277,7 +272,7 @@ def draw_full_network(
     ax.axis("off")
 
 
-# ── draw: single module panel ─────────────────────────────────────────────────
+#draw: single module panel
 def draw_module_panel(
     ax: plt.Axes,
     g_zone: nx.Graph,
@@ -303,7 +298,7 @@ def draw_module_panel(
     sizes = degree_scaled_sizes(sg, lo=15.0, hi=120.0)
     node_list = list(sg.nodes())
 
-    # nodes coloured by sub-module (Leiden within zone) but tinted by zone
+    #nodes coloured by sub-module leiden within zone
     sub_mods = leiden_on_graph(sg, seed=seed)
     colors = [module_color(sub_mods.get(n, 1)) for n in node_list]
     sz     = [sizes.get(n, 30.0) for n in node_list]
@@ -330,7 +325,7 @@ def draw_module_panel(
     ax.axis("off")
 
 
-# ── standalone complete network: three spatial zones ──────────────────────────
+#standalone complete network: three spatial zones
 def _zone_spring_layout(
     g: nx.Graph,
     cx: float,
@@ -338,22 +333,18 @@ def _zone_spring_layout(
     seed: int,
     zone_radius: float,
 ) -> dict[str, tuple[float, float]]:
-    """Spring layout within a zone subgraph, normalised and offset to (cx, cy).
-
-    Uses a generous k (node spacing) so even dense zones spread into a readable blob
-    rather than collapsing. Isolated nodes scatter naturally at the periphery.
-    """
+    #spring layout normalised and offset to (cx, cy); generous k so dense zones stay readable
     if g.number_of_nodes() == 0:
         return {}
     n = g.number_of_nodes()
-    # larger k than default → more spread; inversely scaled with density
+    #larger k than default → more spread, inversely scaled with density
     k = max(0.8, 3.5 / math.sqrt(n))
     if g.number_of_edges() == 0:
         raw = nx.spring_layout(g, seed=seed, k=k, iterations=1)
     else:
         raw = nx.spring_layout(g, seed=seed, weight="weight", k=k, iterations=100)
 
-    # normalise then scale to zone_radius
+    #normalise then scale to zone_radius
     xs = [x for x, y in raw.values()]
     ys = [y for x, y in raw.values()]
     x_range = max(xs) - min(xs) or 1.0
@@ -373,10 +364,7 @@ def _thin_intra_edges(
     zone_genes: set[str],
     top_quantile: float = 0.70,
 ) -> list[tuple[str, str, dict]]:
-    """Return intra-zone edges filtered to the top (1-top_quantile) by weight.
-
-    Keeps only the strongest edges so dense zones don't render as a solid blob.
-    """
+    #return intra-zone edges filtered to top (1-top_quantile) by weight to avoid overplotting
     edges = [(u, v, d) for u, v, d in g_full.edges(data=True)
              if u in zone_genes and v in zone_genes]
     if not edges:
@@ -394,7 +382,7 @@ def _draw_zone_panel(
     seed: int,
     top_edge_quantile: float = 0.60,
 ) -> dict[str, tuple[float, float]]:
-    """Draw one zone panel with community layout. Returns pos dict (all zone nodes)."""
+    #draw one zone panel with community layout; returns pos dict for all zone nodes
     color = ZONE_PALETTE[zone]
     ax.set_facecolor("#f7f7f7")
 
@@ -403,10 +391,10 @@ def _draw_zone_panel(
         ax.axis("off")
         return {}
 
-    # community detection on full zone graph
+    #community detection on zone subgraph
     mod_map = leiden_on_graph(g_zone, seed=seed)
 
-    # filter to modules with ≥ MIN_ZONE_MODULE_SIZE nodes to avoid ring-of-dots artifact
+    #filter to modules with ≥ MIN_ZONE_MODULE_SIZE nodes to avoid ring-of-dots artifact
     mod_sizes: dict[int, int] = {}
     for n, m in mod_map.items():
         mod_sizes[m] = mod_sizes.get(m, 0) + 1
@@ -424,7 +412,7 @@ def _draw_zone_panel(
 
     pos = community_layout(g_display, mod_display, seed=seed)
 
-    # only draw top edges to avoid solid-mass overplotting
+    #only draw top edges to avoid solid-mass overplotting
     if g_display.number_of_edges() > 0:
         all_e = list(g_display.edges(data=True))
         weights = np.array([d.get("weight", 0.0) for _, _, d in all_e], dtype=float)
@@ -471,10 +459,7 @@ def draw_standalone_network(
     dpi: int = 150,
     seed: int = 7,
 ) -> None:
-    """Three-panel standalone: case | shared | ctrl — each with community layout.
-    Cross-zone S edges drawn as connecting lines between panels using a shared
-    coordinate space stitched across axes.
-    """
+    #three-panel standalone: case | shared | ctrl with community layout and cross-zone edge lines
     nodes_in_net = set(g_full.nodes())
     case_genes   = {g for g in nodes_in_net if pres_map.get(g) == "case_only"}
     ctrl_genes   = {g for g in nodes_in_net if pres_map.get(g) == "ctrl_only"}
@@ -490,7 +475,7 @@ def draw_standalone_network(
         flush=True,
     )
 
-    # ── figure: 1 row × 3 cols, wide landscape ────────────────────────────────
+    #1 row x 3 cols, wide landscape
     fig, axes = plt.subplots(1, 3, figsize=(48, 20))
     fig.patch.set_facecolor("#fafafa")
     fig.suptitle(
@@ -500,7 +485,7 @@ def draw_standalone_network(
         fontsize=16, y=1.00,
     )
 
-    # draw each zone panel; shared zone slightly stricter to avoid overplotting
+    #draw each zone panel; shared zone slightly stricter edge quantile to avoid overplotting
     pos_case   = _draw_zone_panel(axes[0], g_case,   "case_only",
                                   f"Case-specific — {case}",   seed,     top_edge_quantile=0.40)
     pos_shared = _draw_zone_panel(axes[1], g_shared, "shared",
@@ -508,8 +493,7 @@ def draw_standalone_network(
     pos_ctrl   = _draw_zone_panel(axes[2], g_ctrl,   "ctrl_only",
                                   f"Ctrl-specific — {ctrl}",   seed + 2, top_edge_quantile=0.40)
 
-    # ── cross-zone S edges as inter-panel connection lines (figure coords) ────
-    # We draw them using fig.add_artist(ConnectionPatch) which spans axes.
+    #cross-zone edges as inter-panel connection lines via ConnectionPatch
     from matplotlib.patches import ConnectionPatch
     cross_edges = [
         (u, v, d) for u, v, d in g_full.edges(data=True)
@@ -517,7 +501,7 @@ def draw_standalone_network(
         and not (u in ctrl_genes and v in ctrl_genes)
         and not (u in shared_genes and v in shared_genes)
     ]
-    # only draw a sample to avoid overplotting (top 200 by weight)
+    #only draw top 300 cross-zone edges to avoid overplotting
     cross_edges_sorted = sorted(cross_edges, key=lambda e: e[2].get("weight", 0), reverse=True)[:300]
 
     zone_ax   = {"case_only": axes[0], "ctrl_only": axes[2], "shared": axes[1]}
@@ -542,7 +526,7 @@ def draw_standalone_network(
         )
         fig.add_artist(cp)
 
-    # ── legend ────────────────────────────────────────────────────────────────
+    #legend
     edge_patches = [mpatches.Patch(color=c, label=f"{t} edge") for t, c in EDGE_COLORS.items()]
     zone_patches = [mpatches.Patch(color=ZONE_PALETTE[z], label=z.replace("_", " "))
                     for z in ["case_only", "shared", "ctrl_only"]]
@@ -558,7 +542,7 @@ def draw_standalone_network(
     print(f"  standalone saved → {out_path}")
 
 
-# ── assemble figure ───────────────────────────────────────────────────────────
+#assemble figure
 def make_figure(
     pair_name: str,
     case: str,
@@ -576,7 +560,7 @@ def make_figure(
     dpi: int = 150,
     seed: int = 7,
 ) -> None:
-    # Very large portrait — side columns wide enough for readable module panels
+    #large portrait; side columns wide enough for readable module panels
     fig = plt.figure(figsize=(36, 44))
     fig.patch.set_facecolor("#fafafa")
     fig.suptitle(
@@ -585,7 +569,7 @@ def make_figure(
         fontsize=15, y=0.999, va="top",
     )
 
-    # outer: top (network + side modules) / bottom (shared modules)
+    #outer grid: top (network + side modules) / bottom (shared modules)
     outer = gridspec.GridSpec(
         2, 1, figure=fig,
         height_ratios=[3.0, 1.6],
@@ -593,8 +577,7 @@ def make_figure(
         top=0.975, bottom=0.03, left=0.02, right=0.98,
     )
 
-    # top: [case 2-col grid | full network | ctrl 2-col grid]
-    # Give side columns more weight so module panels are bigger
+    #top: case 2-col | full network | ctrl 2-col; side columns wider for readability
     top_gs = gridspec.GridSpecFromSubplotSpec(
         1, 3, subplot_spec=outer[0],
         width_ratios=[1.4, 2.2, 1.4],
@@ -604,14 +587,14 @@ def make_figure(
     full_ax  = fig.add_subplot(top_gs[1])
     ctrl_gs  = gridspec.GridSpecFromSubplotSpec(3, 2, subplot_spec=top_gs[2], hspace=0.42, wspace=0.32)
 
-    # bottom: shared 2×3
+    #bottom: shared 2x3 grid
     bot_gs = gridspec.GridSpecFromSubplotSpec(2, 3, subplot_spec=outer[1], hspace=0.40, wspace=0.28)
 
     case_axes   = [fig.add_subplot(case_gs[r, c]) for r in range(3) for c in range(2)]
     ctrl_axes   = [fig.add_subplot(ctrl_gs[r, c]) for r in range(3) for c in range(2)]
     shared_axes = [fig.add_subplot(bot_gs[r, c])  for r in range(2) for c in range(3)]
 
-    # zone labels
+    #zone labels
     fig.text(0.095, 0.978, f"Case-specific\n{case}",
              ha="center", fontsize=10, color=ZONE_PALETTE["case_only"], fontweight="bold")
     fig.text(0.905, 0.978, f"Ctrl-specific\n{ctrl}",
@@ -619,10 +602,9 @@ def make_figure(
     fig.text(0.500, 0.268, "Shared genes",
              ha="center", fontsize=10, color=ZONE_PALETTE["shared"], fontweight="bold")
 
-    # full network
+    #draw full network and module panels
     draw_full_network(full_ax, g_full, node_to_module_full, seed=seed)
 
-    # module panels
     for idx, ax in enumerate(case_axes):
         if idx < len(mods_case):
             mid, genes = mods_case[idx]
@@ -644,7 +626,7 @@ def make_figure(
         else:
             ax.axis("off")
 
-    # module colour legend (for full network)
+    #module colour legend for full network
     n_mods_full = len(set(node_to_module_full.values()))
     mod_patches = [
         mpatches.Patch(color=module_color(i), label=f"Module {i}")
@@ -667,7 +649,7 @@ def make_figure(
     print(f"  saved → {out_path}")
 
 
-# ── per-pair driver ───────────────────────────────────────────────────────────
+#per-pair driver helpers
 def _save_full_network_standalone(
     g_full: nx.Graph,
     node_to_module: dict[str, int],
@@ -678,19 +660,18 @@ def _save_full_network_standalone(
     dpi: int,
     seed: int,
 ) -> None:
-    """Save just the full network (community layout) as its own figure, portrait layout."""
+    #save full network community layout as a standalone portrait figure
     fig, ax = plt.subplots(figsize=(18, 24))
     fig.subplots_adjust(left=0.01, right=0.99, top=0.96, bottom=0.18)
     fig.patch.set_facecolor("#fafafa")
     draw_full_network(ax, g_full, node_to_module, seed=seed,
                       heading=f"Differential Co-expression Network — Union  |  {pair_name.replace('__vs__', ' vs ')}")
-    # edge-type legend — bottom left
+    #edge-type legend bottom left; module legend bottom right
     edge_patches = [mpatches.Patch(color=c, label=f"{t} — {'Conserved' if t == 'C' else 'Specific' if t == 'S' else 'Differentiated'}")
                     for t, c in EDGE_COLORS.items()]
     fig.legend(handles=edge_patches, loc="lower left", fontsize=9, ncol=1,
                bbox_to_anchor=(0.01, 0.01), frameon=True, framealpha=0.85,
                title="Edge type", title_fontsize=9)
-    # module legend — bottom right
     n_mods = len(set(node_to_module.values()))
     mod_patches = [mpatches.Patch(color=module_color(i), label=f"Module {i}") for i in range(1, min(n_mods + 1, 13))]
     if n_mods > 12:
@@ -714,7 +695,7 @@ def _save_zone_module_figure(
     dpi: int,
     seed: int,
 ) -> None:
-    """3×2 grid of module panels styled like branchB combined figure."""
+    #3x2 grid of zone module panels
     zone_color = ZONE_PALETTE.get(zone, "#333333")
 
     fig = plt.figure(figsize=(24, 17))
@@ -770,7 +751,7 @@ def _save_zone_module_figure(
             nx.draw_networkx_labels(sg, sub_pos, labels={n: n for n in hubs}, ax=ax,
                                     font_size=7, font_color="#1d3557", font_weight="bold")
 
-        # branchB-style 3-line title
+        #3-line title: size note, edges, top hubs
         n_shown  = sg.number_of_nodes()
         n_edges  = sg.number_of_edges()
         top3     = hubs[:3]
@@ -829,7 +810,7 @@ def run_pair(
         print(f"  [warn] no edges, skipping")
         return
 
-    # full graph
+    #build full graph from edge table
     g_full = nx.Graph()
     for row in edges_df.itertuples(index=False):
         g_full.add_edge(
@@ -840,7 +821,7 @@ def run_pair(
             wTO=float(row.wTO) if hasattr(row, "wTO") and not math.isnan(float(row.wTO)) else float("nan"),
         )
 
-    # zone subgraphs
+    #split into case/ctrl/shared zone subgraphs
     nodes_in_net = set(g_full.nodes())
     case_genes   = {g for g in nodes_in_net if pres_map.get(g) == "case_only"}
     ctrl_genes   = {g for g in nodes_in_net if pres_map.get(g) == "ctrl_only"}
@@ -850,7 +831,7 @@ def run_pair(
     g_ctrl   = g_full.subgraph(ctrl_genes).copy()
     g_shared = g_full.subgraph(shared_genes).copy()
 
-    # Leiden on full graph and each zone
+    #run leiden on full graph and each zone subgraph
     print(f"  Leiden: full graph…", flush=True)
     node_to_module_full = leiden_on_graph(g_full, seed=seed)
     print(f"  Leiden: zone subgraphs…", flush=True)
@@ -868,7 +849,7 @@ def run_pair(
     pair_out = out_root / pair_name
     pair_out.mkdir(parents=True, exist_ok=True)
 
-    # ── combined zone+modules figure ──────────────────────────────────────────
+    #combined zone+modules figure
     make_figure(
         pair_name=pair_name, case=case, ctrl=ctrl,
         g_full=g_full, g_case=g_case, g_ctrl=g_ctrl, g_shared=g_shared,
@@ -878,14 +859,14 @@ def run_pair(
         out_path=pair_out / f"{pair_name}_zone_modules.png", dpi=dpi, seed=seed,
     )
 
-    # ── standalone 3-panel (case|shared|ctrl) ────────────────────────────────
+    #standalone 3-panel: case | shared | ctrl
     draw_standalone_network(
         g_full=g_full, node_to_module=node_to_module_full,
         pres_map=pres_map, pair_name=pair_name, case=case, ctrl=ctrl,
         out_path=pair_out / f"{pair_name}_complete_network.png", dpi=dpi, seed=seed,
     )
 
-    # ── standalone full network (center only, no module panels) ──────────────
+    #standalone full network (center only, no module panels)
     print("  full network standalone…", flush=True)
     _save_full_network_standalone(
         g_full=g_full, node_to_module=node_to_module_full,
@@ -893,7 +874,7 @@ def run_pair(
         out_path=pair_out / f"{pair_name}_full_network.png", dpi=dpi, seed=seed,
     )
 
-    # ── per-zone module figures (branchB style, 3×2 grid) ────────────────────
+    #per-zone module figures (3x2 grid)
     print("  zone module figures…", flush=True)
     for zone, g_zone, mods, label in [
         ("case_only",  g_case,   mods_case,   f"Case — {case}"),
@@ -909,7 +890,7 @@ def run_pair(
         )
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+#cli
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Union network zone visualization")
     p.add_argument("--network-dir",  default="results/14_csd_networks")
@@ -921,13 +902,16 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args     = parse_args()
+
+    #resolve paths and create output dir
     net_root = resolve_base(args.network_dir)
     up_root  = resolve_base(args.upstream_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #discover pair dirs and filter to requested subset if specified
     pair_dirs = sorted([p for p in net_root.iterdir() if p.is_dir() and "__vs__" in p.name])
     if args.pair:
         keep      = set(args.pair)
@@ -935,17 +919,13 @@ def main() -> None:
     if not pair_dirs:
         raise ValueError("No pair directories found")
 
+    #visualize each pair
     for pair_dir in pair_dirs:
-        run_pair(
-            pair_name=pair_dir.name,
-            network_root=net_root,
-            upstream_root=up_root,
-            out_root=out_root,
-            dpi=int(args.dpi),
-            seed=int(args.seed),
-        )
+        run_pair(pair_name=pair_dir.name, network_root=net_root, upstream_root=up_root,
+                 out_root=out_root, dpi=int(args.dpi), seed=int(args.seed))
     print(f"\nDone. Zone visualizations → {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

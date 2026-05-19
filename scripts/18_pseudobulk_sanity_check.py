@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Sanity checks for pseudobulk outputs.
-
-This script validates pseudobulk quality after `07_pseudobulk.py` and writes
-QC tables and figures suitable for methods/results reporting.
-"""
+"""Sanity checks for pseudobulk outputs from 15_pseudobulk.py."""
 
 from __future__ import annotations
 
@@ -31,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-dir",
         default="results/06_pseudobulk",
-        help="Pseudobulk directory from 07_pseudobulk.py",
+        help="Pseudobulk directory from 15_pseudobulk.py",
     )
     parser.add_argument(
         "--output-dir",
@@ -284,7 +280,7 @@ def save_plots(
             metrics["detected_genes"].astype(float) / float(n_genes)
         )
 
-    # 1) Library size / detected genes distributions.
+    #library size and detected genes distributions
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
     axes[0].hist(
         np.log10(metrics["library_size"].clip(lower=1.0)),
@@ -310,7 +306,7 @@ def save_plots(
     fig.savefig(fig_dir / "qc_distributions.png", dpi=180, bbox_inches="tight")
     plt.close(fig)
 
-    # 1b) Condition-wise detectable-gene fraction.
+    #condition-wise detectable-gene fraction boxplot
     cond_levels = sorted(metrics[condition_col].astype(str).unique())
     median_by_cond = {
         cond: metrics.loc[
@@ -389,7 +385,7 @@ def save_plots(
     )
     plt.close(fig)
 
-    # 2) n_cells vs library size, colored by condition.
+    #n_cells vs library size scatter coloured by condition
     if "n_cells" in metrics.columns:
         fig, ax = plt.subplots(figsize=(6, 5))
         conds = sorted(metrics[condition_col].astype(str).unique())
@@ -440,7 +436,7 @@ def save_plots(
         )
         plt.close(fig)
 
-    # 3) PCA on pseudobulk logCPM.
+    #pca on pseudobulk logcpm coloured by condition and cell type
     x = logcpm.T.values
     if x.shape[0] >= 3 and x.shape[1] >= 2:
         scores, var_ratio = pca_scores(x, n_components=2)
@@ -498,10 +494,8 @@ def save_plots(
         fig.savefig(fig_dir / "qc_pca.png", dpi=180, bbox_inches="tight")
         plt.close(fig)
 
-    # 4) Correlation heatmap (profile-level).
+    #pearson correlation heatmap ordered by condition -> cell type -> sample
     corr = logcpm.corr(method="pearson")
-
-    # Reorder by condition -> cell type -> sample for interpretability.
     order_meta = ensure_pseudobulk_id_column(
         metrics.copy(),
         Path("<in_memory_metrics>"),
@@ -554,12 +548,7 @@ def compute_celltype_balance(
     condition_col: str,
     min_cells_per_type: int,
 ) -> pd.DataFrame:
-    """Total cells per condition x cell type, with a below-threshold flag.
-
-    Uses the n_cells column from pseudobulk metadata (cells aggregated per
-    profile). Flags combinations where total cells < min_cells_per_type —
-    these pseudobulk correlations should be interpreted with caution.
-    """
+    #total cells per condition x cell type; flags groups below min_cells_per_type
     if "n_cells" not in meta.columns:
         return pd.DataFrame()
 
@@ -587,12 +576,7 @@ def compute_sample_dominance(
     condition_col: str,
     max_sample_dominance: float,
 ) -> pd.DataFrame:
-    """Per-sample cell fraction within each condition x cell type group.
-
-    Flags any sample contributing more than max_sample_dominance of total
-    cells for a given condition x cell type — a sign that the pseudobulk
-    profile is effectively a single-sample observation.
-    """
+    #per-sample cell fraction per condition x cell type; flags dominant samples
     if "n_cells" not in meta.columns:
         return pd.DataFrame()
 
@@ -607,7 +591,7 @@ def compute_sample_dominance(
         dom["n_cells"].astype(float) / dom["group_total_cells"].astype(float)
     )
 
-    # Keep per-sample summary (max fraction per sample within the group)
+    #aggregate to per-sample max fraction within each condition x cell type group
     dom_summary = (
         dom.groupby([condition_col, group_col, sample_col], as_index=False)
         .agg(
@@ -669,89 +653,68 @@ def build_summary_tables(
     return by_condition, by_group, flagged
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output dirs
     in_root = resolve_base(args.input_dir)
     out_root = resolve_base(args.output_dir)
     fig_dir = out_root / "figures"
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #load all pseudobulk counts and metadata
     counts, meta = load_all_pseudobulk(in_root)
 
+    #compute per-profile qc metrics and logcpm matrix
     metrics = compute_profile_metrics(
-        counts=counts,
-        meta=meta,
-        sample_col=args.sample_col,
-        group_col=args.group_col,
-        condition_col=args.condition_col,
+        counts=counts, meta=meta, sample_col=args.sample_col,
+        group_col=args.group_col, condition_col=args.condition_col,
         min_cells_warning=args.min_cells_warning,
     )
-
     logcpm = logcpm_matrix(counts)
 
+    #generate qc plots
     save_plots(
-        metrics=metrics,
-        logcpm=logcpm,
-        fig_dir=fig_dir,
-        sample_col=args.sample_col,
-        group_col=args.group_col,
-        condition_col=args.condition_col,
-        min_cells_warning=args.min_cells_warning,
+        metrics=metrics, logcpm=logcpm, fig_dir=fig_dir,
+        sample_col=args.sample_col, group_col=args.group_col,
+        condition_col=args.condition_col, min_cells_warning=args.min_cells_warning,
     )
 
+    #build condition and group summary tables
     by_condition, by_group, flagged = build_summary_tables(
-        metrics=metrics,
-        sample_col=args.sample_col,
-        group_col=args.group_col,
-        condition_col=args.condition_col,
-        min_profiles_per_group=args.min_profiles_per_group,
+        metrics=metrics, sample_col=args.sample_col, group_col=args.group_col,
+        condition_col=args.condition_col, min_profiles_per_group=args.min_profiles_per_group,
     )
 
+    #compute cell-type balance and sample dominance tables
     celltype_balance = compute_celltype_balance(
-        meta=meta,
-        sample_col=args.sample_col,
-        group_col=args.group_col,
-        condition_col=args.condition_col,
-        min_cells_per_type=args.min_cells_per_type,
+        meta=meta, sample_col=args.sample_col, group_col=args.group_col,
+        condition_col=args.condition_col, min_cells_per_type=args.min_cells_per_type,
     )
-
     sample_dominance = compute_sample_dominance(
-        meta=meta,
-        sample_col=args.sample_col,
-        group_col=args.group_col,
-        condition_col=args.condition_col,
-        max_sample_dominance=args.max_sample_dominance,
+        meta=meta, sample_col=args.sample_col, group_col=args.group_col,
+        condition_col=args.condition_col, max_sample_dominance=args.max_sample_dominance,
     )
 
+    #save csv outputs
     metrics.to_csv(out_root / "qc_profile_metrics.csv", index=False)
     by_condition.to_csv(out_root / "qc_summary_by_condition.csv", index=False)
     by_group.to_csv(out_root / "qc_summary_by_condition_celltype.csv", index=False)
     flagged.to_csv(out_root / "qc_flagged_profiles.csv", index=False)
 
     if not celltype_balance.empty:
-        celltype_balance.to_csv(
-            out_root / "qc_celltype_balance.csv", index=False
-        )
+        celltype_balance.to_csv(out_root / "qc_celltype_balance.csv", index=False)
         n_flagged_balance = int(celltype_balance["below_min_cells_flag"].sum())
         if n_flagged_balance:
-            print(
-                f"  WARNING: {n_flagged_balance} condition x cell-type groups "
-                f"below {args.min_cells_per_type} total cells — "
-                "correlations for these groups may be unreliable"
-            )
+            print(f"  WARNING: {n_flagged_balance} condition x cell-type groups below {args.min_cells_per_type} total cells — correlations may be unreliable")
 
     if not sample_dominance.empty:
-        sample_dominance.to_csv(
-            out_root / "qc_sample_dominance.csv", index=False
-        )
+        sample_dominance.to_csv(out_root / "qc_sample_dominance.csv", index=False)
         n_dominant = int(sample_dominance["dominant_sample_flag"].sum())
         if n_dominant:
-            print(
-                f"  WARNING: {n_dominant} condition x cell-type x sample entries "
-                f"exceed {args.max_sample_dominance:.0%} dominance — "
-                "pseudobulk may reflect a single sample"
-            )
+            print(f"  WARNING: {n_dominant} entries exceed {args.max_sample_dominance:.0%} dominance — pseudobulk may reflect a single sample")
 
+    #write warehouse provenance record
     record = WarehouseRecord(
         input_file=str(in_root),
         output_file=str(out_root / "qc_summary_by_condition.csv"),
@@ -759,20 +722,15 @@ def main() -> None:
         date_utc=utc_now_iso(),
         params_hash=params_hash(vars(args)),
         condition="all",
-        stage="07_network_pseudobulk_qc",
+        stage="pseudobulk_qc",
     )
     append_warehouse(out_root.parent, [record])
 
     print("Pseudobulk sanity check complete.")
     print(f"Profiles: {metrics.shape[0]} | Genes: {counts.shape[0]}")
     print(f"Outputs: {out_root}")
-    print(f"  qc_profile_metrics.csv          — per-profile library size, detected genes, outlier flags")
-    print(f"  qc_summary_by_condition.csv     — per-condition profile counts and medians")
-    print(f"  qc_summary_by_condition_celltype.csv — per condition x cell type replicates")
-    print(f"  qc_flagged_profiles.csv         — profiles flagged as outliers or low cell count")
-    print(f"  qc_celltype_balance.csv         — total cells per condition x cell type (threshold: {args.min_cells_per_type})")
-    print(f"  qc_sample_dominance.csv         — per-sample cell fraction (dominance threshold: {args.max_sample_dominance:.0%})")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

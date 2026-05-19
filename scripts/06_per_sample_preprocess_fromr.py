@@ -140,6 +140,7 @@ def run_condition(
     out_dir = output_base / condition
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #find all filtered h5ad files for this condition
     files = sorted(in_dir.glob("*_filtered.h5ad"))
     if not files:
         print(f"Skipping {condition}: no *_filtered.h5ad files found")
@@ -148,22 +149,15 @@ def run_condition(
     print(f"\nCondition: {condition} | Samples: {len(files)}")
     rows: list[dict] = []
 
+    #preprocess each sample and save to output dir
     for idx, fpath in enumerate(files, start=1):
         sname = sample_name(fpath)
         print(f"[{idx}/{len(files)}] Processing {sname} ...")
 
         adata = sc.read_h5ad(fpath)
         n_cells, n_genes = adata.n_obs, adata.n_vars
-        adata = preprocess(
-            adata,
-            args.n_top_genes,
-            args.target_sum,
-            args.scale_max_value,
-        )
-        if "highly_variable" in adata.var.columns:
-            n_hvg = int(adata.var["highly_variable"].sum())
-        else:
-            n_hvg = 0
+        adata = preprocess(adata, args.n_top_genes, args.target_sum, args.scale_max_value)
+        n_hvg = int(adata.var["highly_variable"].sum()) if "highly_variable" in adata.var.columns else 0
 
         out_file = out_dir / f"{sname}_preprocessed.h5ad"
         adata.write_h5ad(out_file)
@@ -188,9 +182,12 @@ def run_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve input and output roots
     input_base = resolve_base(args.input_dir)
     output_base = resolve_base(args.output_dir)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         conditions = list_conditions(input_base)
         if not conditions:
@@ -201,6 +198,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions with fuzzy matching on failure
     try:
         targets = resolve_conditions(input_base, args.condition)
     except ValueError as exc:
@@ -211,6 +209,7 @@ def main() -> int:
         print(f"No condition folders found in: {input_base}")
         return 1
 
+    #run preprocessing per condition and collect summary rows
     rows: list[dict] = []
     for condition in targets:
         rows.extend(run_condition(condition, input_base, output_base, args))
@@ -219,9 +218,8 @@ def main() -> int:
         print(f"No filtered files processed from: {input_base}")
         return 1
 
-    summary_root = (
-        output_base if len(targets) > 1 else output_base / targets[0]
-    )
+    #write summary csv alongside processed files
+    summary_root = output_base if len(targets) > 1 else output_base / targets[0]
     summary_path = summary_root / "preprocess_summary.csv"
     pd.DataFrame(rows).to_csv(summary_path, index=False)
 

@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""
-Stage 14 — Network Tag Permutation.
-
-Tests whether cell-type labels are spatially clustered on the persistent
-co-expression network beyond what is expected by chance.
-
-Metric: weighted neighbourhood homophily
-  For each tagged node v with cell type t:
-    h(v) = sum_{u in tagged_neighbours(v)} w(v,u) * 1[tag(u)==t]
-           / sum_{u in tagged_neighbours(v)} w(v,u)
-
-Null model: label-preserving Fisher-Yates shuffle of cell_type labels
-  among labelled nodes only. Preserves per-type counts.
-
-Nodes with no cell_type label are excluded from both the metric and the
-shuffle pool but remain in the network topology.
-"""
+"""Weighted neighbourhood homophily permutation test for cell-type spatial clustering on CSD networks."""
 from __future__ import annotations
 
 import argparse
@@ -48,16 +32,14 @@ PAIR_NAMES = [
     "Triple_negative_tumor__vs__Normal",
 ]
 
-# Pairs where small network warrants an interpretive note
+#pairs where small network warrants an interpretive note
 SPARSE_PAIRS = {"Triple_negative_BRCA1_tumor__vs__Normal_BRCA1_-_pre-neoplastic"}
 
 MIN_NODES_PER_TYPE = 5   # minimum labelled nodes to report per-type result
 DEFAULT_N_PERM = 500
 
 
-# ---------------------------------------------------------------------------
-# I/O helpers
-# ---------------------------------------------------------------------------
+#i/O helpers
 
 def _resolve_viz_inputs(pair_name: str) -> tuple[Path, Path]:
     node_path = TAGGING_DIR / f"{pair_name}_tagged_with_lfc.csv"
@@ -76,23 +58,17 @@ def load_pair(pair_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     return nodes, edges
 
 
-# ---------------------------------------------------------------------------
-# Graph construction (adjacency over tagged nodes)
-# ---------------------------------------------------------------------------
+#graph construction (adjacency over tagged nodes)
 
 def build_weighted_adjacency(
     nodes: pd.DataFrame,
     edges: pd.DataFrame,
     tag_col: str = "cell_type",
 ) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
-    """
-    Return:
-      adj  — {gene: {neighbour_gene: weight}} for all edge endpoints
-      tags — {gene: cell_type} for labelled nodes only
-    """
+    #return:
     symbol_col = "approved_symbol" if "approved_symbol" in nodes.columns else "gene"
 
-    # Build gene → cell_type map (drop unlabelled)
+    #build gene → cell_type map (drop unlabelled)
     tag_series = (
         nodes[["gene", tag_col]]
         .dropna(subset=[tag_col])
@@ -101,7 +77,7 @@ def build_weighted_adjacency(
     )
     tags: dict[str, str] = tag_series.to_dict()
 
-    # Build adjacency from edges (weighted, undirected)
+    #build adjacency from edges (weighted, undirected)
     adj: dict[str, dict[str, float]] = {}
     for _, row in edges.iterrows():
         a, b = str(row["gene_a"]), str(row["gene_b"])
@@ -112,9 +88,7 @@ def build_weighted_adjacency(
     return adj, tags
 
 
-# ---------------------------------------------------------------------------
-# Homophily computation
-# ---------------------------------------------------------------------------
+#homophily computation
 
 def _node_homophily(
     gene: str,
@@ -122,7 +96,7 @@ def _node_homophily(
     adj: dict[str, dict[str, float]],
     tags: dict[str, str],
 ) -> float | None:
-    """Weighted homophily for a single node. Returns None if no tagged neighbours."""
+    #weighted homophily for a single node. Returns None if no tagged neighbours
     neighbours = adj.get(gene, {})
     total_w = 0.0
     same_w = 0.0
@@ -140,13 +114,7 @@ def compute_homophily(
     adj: dict[str, dict[str, float]],
     tags: dict[str, str],
 ) -> tuple[float | None, dict[str, float]]:
-    """
-    Compute overall homophily and per-cell-type homophily.
-
-    Returns:
-        overall  — mean h(v) across all eligible labelled nodes
-        per_type — {cell_type: mean h(v) for nodes of that type}
-    """
+    #compute overall homophily and per-cell-type homophily
     per_type_vals: dict[str, list[float]] = {}
     all_vals: list[float] = []
 
@@ -161,9 +129,7 @@ def compute_homophily(
     return overall, per_type
 
 
-# ---------------------------------------------------------------------------
-# Permutation
-# ---------------------------------------------------------------------------
+#permutation
 
 def run_permutations(
     adj: dict[str, dict[str, float]],
@@ -171,13 +137,7 @@ def run_permutations(
     n_perm: int,
     rng: np.random.Generator,
 ) -> tuple[list[float], dict[str, list[float]]]:
-    """
-    Perform label-preserving permutations.
-
-    Returns:
-        null_overall   — list of overall H values from each permutation
-        null_per_type  — {cell_type: list of H_t values}
-    """
+    #perform label-preserving permutations
     genes = list(tags.keys())
     labels = list(tags.values())
     all_types = set(labels)
@@ -205,10 +165,7 @@ def plot_convergence(
     real_overall: float | None,
     out_path: Path,
 ) -> None:
-    """
-    Plot the running (cumulative) mean and ±1 SD of the null distribution
-    as permutations accumulate. A flat line means 500 permutations was enough.
-    """
+    #plot the running (cumulative) mean and ±1 SD of the null distribution
     arr = np.array(null_overall)
     n = len(arr)
     steps = np.arange(1, n + 1)
@@ -229,7 +186,7 @@ def plot_convergence(
     ax.set_xlabel("Number of permutations", fontsize=10)
     ax.set_ylabel("Homophily (H)", fontsize=10)
     ax.set_title(f"{pair_name.replace('__vs__', ' vs ')} — null convergence", fontsize=10)
-    # Y axis: scale to null distribution range only
+    #y axis: scale to null distribution range only
     y_min = max(0.0, (running_mean - running_std).min() * 0.95)
     y_max = (running_mean + running_std).max() * 1.05
     ax.set_ylim(y_min, y_max)
@@ -240,9 +197,7 @@ def plot_convergence(
     plt.close()
 
 
-# ---------------------------------------------------------------------------
-# Statistics
-# ---------------------------------------------------------------------------
+#statistics
 
 def _stats(real: float, null: list[float]) -> dict:
     null_arr = np.array(null)
@@ -259,9 +214,7 @@ def _stats(real: float, null: list[float]) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Plotting
-# ---------------------------------------------------------------------------
+#plotting
 
 def plot_null_distributions(
     pair_name: str,
@@ -297,11 +250,11 @@ def plot_null_distributions(
         ax.set_ylabel("Count", fontsize=8)
         ax.tick_params(labelsize=7)
 
-    # Panel 0: overall
+    #panel 0: overall
     overall_n = len(tags)
     _draw(axes_flat[0], null_overall, real_overall, "Overall network", overall_n)
 
-    # Per-type panels
+    #per-type panels
     for i, ct in enumerate(eligible, start=1):
         n_ct = type_counts[ct]
         _draw(
@@ -312,7 +265,7 @@ def plot_null_distributions(
             n_ct,
         )
 
-    # Hide unused panels
+    #hide unused panels
     for ax in axes_flat[n_panels:]:
         ax.set_visible(False)
 
@@ -327,9 +280,7 @@ def plot_null_distributions(
     plt.close()
 
 
-# ---------------------------------------------------------------------------
-# Per-pair runner
-# ---------------------------------------------------------------------------
+#per-pair runner
 
 def run_pair(
     pair_name: str,
@@ -358,13 +309,13 @@ def run_pair(
         pair_name, n_labelled, n_edges, n_perm,
     )
 
-    # Real homophily
+    #real homophily
     real_overall, real_per_type = compute_homophily(adj, tags)
 
-    # Null distribution
+    #null distribution
     null_overall, null_per_type = run_permutations(adj, tags, n_perm, rng)
 
-    # --- Save overall result ---
+    #save overall result
     overall_row = {"pair_name": pair_name, "cell_type": "OVERALL", "n_nodes": n_labelled}
     if real_overall is not None and null_overall:
         overall_row.update(_stats(real_overall, null_overall))
@@ -375,7 +326,7 @@ def run_pair(
         out_dir / f"{pair_name}_homophily_overall.csv", index=False
     )
 
-    # --- Save per-type results ---
+    #save per-type results
     from collections import Counter
     type_counts = Counter(tags.values())
     per_type_rows = []
@@ -394,7 +345,7 @@ def run_pair(
         out_dir / f"{pair_name}_homophily_per_celltype.csv", index=False
     )
 
-    # --- Plot ---
+    #plot
     plot_null_distributions(
         pair_name=pair_name,
         real_overall=real_overall,
@@ -406,7 +357,7 @@ def run_pair(
         out_path=out_dir / f"{pair_name}_null_distributions.png",
     )
 
-    # --- Convergence plot ---
+    #convergence plot
     plot_convergence(
         pair_name=pair_name,
         null_overall=null_overall,
@@ -429,9 +380,7 @@ def run_pair(
     }
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+#main
 
 def main(n_perm: int, seed: int) -> int:
     logging.basicConfig(

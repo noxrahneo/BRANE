@@ -1,23 +1,4 @@
-#!/usr/bin/env python3
-"""
-Script 54: Cross-network hub gene overlap analysis.
-
-Compares hub gene lists across the 4 main cancer-vs-Normal pairs
-(ER, HER2, TNBC, TNBC_BRCA1) within each tier (D, S_case, S_ctrl).
-
-Produces:
-  - Jaccard similarity heatmap (one panel per tier)
-  - Presence/absence heatmap for recurring genes (2+ conditions)
-  - Bar chart: genes shared in N conditions per tier
-  - jaccard_matrix.csv, recurring_genes.csv per tier
-  - universal_sctrl_genes.csv: the 15 pan-subtype normal-lost hubs
-
-INPUTS:
-  results/20_node_annotation/{pair}/{prefix}_hubs_{tier}.csv
-
-OUTPUTS:
-  results/27_cross_network/
-"""
+"""Cross-network hub gene overlap: Jaccard similarity, presence/absence heatmaps, pan-subtype recurring gene identification."""
 from __future__ import annotations
 
 import logging
@@ -66,9 +47,7 @@ TIER_COLORS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
+#data loading
 
 def _safe_genes(df: pd.DataFrame) -> set[str]:
     col = "approved_symbol" if "approved_symbol" in df.columns else "gene"
@@ -76,7 +55,7 @@ def _safe_genes(df: pd.DataFrame) -> set[str]:
 
 
 def load_hub_sets() -> dict[tuple[str, str], set[str]]:
-    """Return {(short_name, tier): set_of_genes}."""
+    #return {(short_name, tier): set_of_genes}
     hubs: dict[tuple[str, str], set[str]] = {}
     for pair, short in PAIRS.items():
         for tier in TIERS:
@@ -88,9 +67,7 @@ def load_hub_sets() -> dict[tuple[str, str], set[str]]:
     return hubs
 
 
-# ---------------------------------------------------------------------------
-# Jaccard heatmap
-# ---------------------------------------------------------------------------
+#jaccard heatmap
 
 def plot_jaccard_heatmap(hubs: dict[tuple[str, str], set[str]], out_path: Path) -> None:
     labels = list(PAIRS.values())
@@ -132,9 +109,7 @@ def plot_jaccard_heatmap(hubs: dict[tuple[str, str], set[str]], out_path: Path) 
     log.info("Saved: %s", out_path.name)
 
 
-# ---------------------------------------------------------------------------
-# Bar chart: genes shared in N conditions
-# ---------------------------------------------------------------------------
+#bar chart: genes shared in N conditions
 
 def plot_sharing_bars(hubs: dict[tuple[str, str], set[str]], out_path: Path) -> None:
     labels = list(PAIRS.values())
@@ -173,9 +148,7 @@ def plot_sharing_bars(hubs: dict[tuple[str, str], set[str]], out_path: Path) -> 
     log.info("Saved: %s", out_path.name)
 
 
-# ---------------------------------------------------------------------------
-# Presence/absence heatmap for recurring genes
-# ---------------------------------------------------------------------------
+#presence/absence heatmap for recurring genes
 
 def plot_presence_absence(
     hubs: dict[tuple[str, str], set[str]],
@@ -195,7 +168,7 @@ def plot_presence_absence(
         log.info("  %s: no genes in %d+ conditions — skipping", tier, min_conditions)
         return pd.DataFrame()
 
-    # Sort by count desc, then alphabetically
+    #sort by count desc, then alphabetically
     recurring = sorted(recurring, key=lambda g: (-all_genes[g], g))[:max_genes]
 
     mat = np.array([[1 if g in hubs.get((l, tier), set()) else 0
@@ -215,13 +188,13 @@ def plot_presence_absence(
     ax.xaxis.set_ticks_position("top")
     ax.xaxis.set_label_position("top")
 
-    # Grid
+    #grid
     for x in np.arange(-0.5, len(labels), 1):
         ax.axvline(x, color="white", lw=1.5)
     for y in np.arange(-0.5, len(recurring), 1):
         ax.axhline(y, color="white", lw=0.8)
 
-    # Count annotation on right
+    #count annotation on right
     for i, g in enumerate(recurring):
         n = all_genes[g]
         ax.text(len(labels) - 0.5 + 0.6, i, f"n={n}", va="center",
@@ -243,7 +216,7 @@ def plot_presence_absence(
     plt.close(fig)
     log.info("Saved: %s", out_path.name)
 
-    # Return CSV-ready table
+    #return CSV-ready table
     rows = []
     for g in recurring:
         row = {"gene": g, "n_conditions": all_genes[g]}
@@ -253,9 +226,7 @@ def plot_presence_absence(
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# Jaccard CSV export
-# ---------------------------------------------------------------------------
+#jaccard CSV export
 
 def export_jaccard_csv(hubs: dict[tuple[str, str], set[str]], tier: str, out_path: Path) -> None:
     labels = list(PAIRS.values())
@@ -277,54 +248,46 @@ def export_jaccard_csv(hubs: dict[tuple[str, str], set[str]], tier: str, out_pat
     log.info("Saved: %s", out_path.name)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+#main
 
-def main() -> None:
+def main() -> int:
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     hubs = load_hub_sets()
 
-    # 1. Jaccard heatmap (all 3 tiers in one figure)
+    #jaccard heatmap across all 3 tiers
     plot_jaccard_heatmap(hubs, OUTPUT_ROOT / "jaccard_heatmap_all_tiers.png")
 
-    # 2. Sharing bar chart
+    #sharing bar chart
     plot_sharing_bars(hubs, OUTPUT_ROOT / "sharing_bar_chart.png")
 
-    # 3. Per-tier presence/absence heatmaps + CSVs
+    #per-tier presence/absence heatmaps and csvs
     all_recurring: list[pd.DataFrame] = []
     for tier in TIERS:
-        min_cond = 2
-        df = plot_presence_absence(
-            hubs, tier, min_conditions=min_cond,
-            out_path=OUTPUT_ROOT / f"presence_absence_{tier}.png",
-        )
+        df = plot_presence_absence(hubs, tier, min_conditions=2, out_path=OUTPUT_ROOT / f"presence_absence_{tier}.png")
         if not df.empty:
             df["tier"] = tier
             all_recurring.append(df)
             df.to_csv(OUTPUT_ROOT / f"recurring_genes_{tier}.csv", index=False)
-
         export_jaccard_csv(hubs, tier, OUTPUT_ROOT / f"jaccard_{tier}.csv")
 
-    # 4. Combined recurring genes table
+    #combined recurring genes table
     if all_recurring:
         combined = pd.concat(all_recurring, ignore_index=True)
         combined.to_csv(OUTPUT_ROOT / "recurring_genes_all_tiers.csv", index=False)
         log.info("Combined recurring genes: %d rows", len(combined))
 
-    # 5. Universal S_ctrl genes (all 4 subtypes)
+    #universal S_ctrl genes present in all 4 subtypes
     labels = list(PAIRS.values())
     universal = sorted(
         g for g in set().union(*[hubs.get((l, "S_ctrl"), set()) for l in labels])
         if all(g in hubs.get((l, "S_ctrl"), set()) for l in labels)
     )
-    pd.DataFrame({"gene": universal}).to_csv(
-        OUTPUT_ROOT / "universal_sctrl_genes.csv", index=False
-    )
+    pd.DataFrame({"gene": universal}).to_csv(OUTPUT_ROOT / "universal_sctrl_genes.csv", index=False)
     log.info("Universal S_ctrl hub genes (all 4 subtypes): %d  %s", len(universal), universal)
 
     log.info("Done. Results in %s", OUTPUT_ROOT)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

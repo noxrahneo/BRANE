@@ -1,11 +1,5 @@
-#!/usr/bin/env python3
-"""Stage 29 - Degree-preserving topology null tests.
+"""Degree-preserving configuration-model null tests for modularity, assortativity, and clustering."""
 
-For each single-condition network and each differential network, this script
-compares the observed topology to random graphs with the same degree sequence.
-The null graphs are sampled with a configuration-model style degree-sequence
-generator, then evaluated for modularity, assortativity and clustering.
-"""
 
 from __future__ import annotations
 

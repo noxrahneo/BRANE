@@ -163,10 +163,7 @@ def read_marker_genes(
     top_per_cluster: int,
     min_padj: float,
 ) -> list[str]:
-    # Marker selection mirrors the R pattern:
-    # 1) keep positive, significant markers,
-    # 2) keep top genes per cluster,
-    # 3) de-duplicate for a compact heatmap signature panel.
+    #keep significant positive markers, take top n per cluster, deduplicate
     mk = pd.read_csv(marker_file)
     need = {"cluster", "names"}
     if not need.issubset(set(mk.columns)):
@@ -189,9 +186,7 @@ def read_marker_genes(
 
 
 def lognorm_from_counts(adata: sc.AnnData) -> sc.AnnData:
-    # In R scripts, heatmaps are drawn from log-CPM-like values.
-    # Here we rebuild log-normalized expression from raw counts
-    # (if available) before computing group means.
+    #rebuild log-normalised expression from raw counts if available
     ad = adata.copy()
     if "counts" in ad.layers:
         ad.X = ad.layers["counts"].copy()
@@ -262,52 +257,37 @@ def process_condition(
     gene_col: str,
     gene_set_name: str,
 ) -> dict[str, object]:
-    # R equivalent flow:
-    # FindMarkers output -> marker matrix by group -> pheatmap.
+    #validate required input files exist
     cond_dir = root / condition
     h5ad = cond_dir / f"{condition}_annotated.h5ad"
     marker_file = cond_dir / f"{condition}_cluster_markers_top.csv"
     if not h5ad.exists() or not marker_file.exists():
-        raise FileNotFoundError(
-            "Missing required files for "
-            f"{condition}: {h5ad.name}, {marker_file.name}"
-        )
+        raise FileNotFoundError(f"Missing required files for {condition}: {h5ad.name}, {marker_file.name}")
 
+    #select genes from external file or from marker table
     if gene_set_file is not None:
         genes = read_genes_from_file(gene_set_file, gene_col=gene_col)
-        heatmap_type = (
-            gene_set_name.strip()
-            if gene_set_name.strip()
-            else gene_set_file.stem
-        )
+        heatmap_type = gene_set_name.strip() if gene_set_name.strip() else gene_set_file.stem
         file_tag = heatmap_type
     else:
-        genes = read_marker_genes(
-            marker_file=marker_file,
-            top_per_cluster=top_per_cluster,
-            min_padj=min_padj,
-        )
+        genes = read_marker_genes(marker_file=marker_file, top_per_cluster=top_per_cluster, min_padj=min_padj)
         heatmap_type = "marker"
         file_tag = "marker"
 
     if not genes:
-        raise ValueError(
-            f"No genes selected for condition: {condition}"
-        )
+        raise ValueError(f"No genes selected for condition: {condition}")
 
+    #load annotated object, renormalise, and compute group mean matrix
     adata = sc.read_h5ad(h5ad)
     adata = lognorm_from_counts(adata)
-    mean_df = mean_matrix_by_group(
-        adata=adata,
-        genes=genes,
-        group_col=group_col,
-    )
+    mean_df = mean_matrix_by_group(adata=adata, genes=genes, group_col=group_col)
     if mean_df.empty:
-        raise ValueError(
-            f"No marker genes present in data for condition: {condition}"
-        )
+        raise ValueError(f"No marker genes present in data for condition: {condition}")
+
+    #row z-score the mean matrix
     z_df = zscore_rows(mean_df)
 
+    #save expression csv, zscore csv, and heatmap figure
     fig_dir = cond_dir / fig_dir_name
     fig_dir.mkdir(parents=True, exist_ok=True)
     expr_file = cond_dir / f"{condition}_{file_tag}_heatmap_expression.csv"
@@ -316,12 +296,7 @@ def process_condition(
 
     mean_df.to_csv(expr_file)
     z_df.to_csv(z_file)
-    render_heatmap(
-        matrix_z=z_df,
-        title=f"{condition} | {heatmap_type} heatmap by {group_col}",
-        out_file=fig_file,
-        dpi=dpi,
-    )
+    render_heatmap(matrix_z=z_df, title=f"{condition} | {heatmap_type} heatmap by {group_col}", out_file=fig_file, dpi=dpi)
 
     print(f"Marker heatmap complete: {condition}")
     return {
@@ -339,6 +314,8 @@ def process_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve input root and list conditions if requested
     root = resolve_base(args.input_dir)
     available = list_conditions(root)
     if args.list_conditions:
@@ -350,31 +327,27 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions
     conditions = resolve_conditions(root, args.condition)
+
+    #resolve optional external gene set file
     gene_set_file: Path | None = None
     if args.gene_set_file.strip():
         gene_set_file = resolve_base(args.gene_set_file)
         if not gene_set_file.exists():
-            raise FileNotFoundError(
-                f"Gene set file not found: {gene_set_file}"
-            )
+            raise FileNotFoundError(f"Gene set file not found: {gene_set_file}")
 
+    #process each condition and collect summary rows
     arg_hash = params_hash(vars(args))
     now = utc_now_iso()
     rows: list[dict[str, object]] = []
     warehouse_rows: list[WarehouseRecord] = []
     for condition in conditions:
         row = process_condition(
-            root=root,
-            condition=condition,
-            group_col=args.group_col,
-            top_per_cluster=args.top_per_cluster,
-            min_padj=args.min_padj,
-            fig_dir_name=args.fig_dir_name,
-            dpi=args.dpi,
-            gene_set_file=gene_set_file,
-            gene_col=args.gene_col,
-            gene_set_name=args.gene_set_name,
+            root=root, condition=condition, group_col=args.group_col,
+            top_per_cluster=args.top_per_cluster, min_padj=args.min_padj,
+            fig_dir_name=args.fig_dir_name, dpi=args.dpi,
+            gene_set_file=gene_set_file, gene_col=args.gene_col, gene_set_name=args.gene_set_name,
         )
         rows.append(row)
         warehouse_rows.append(
@@ -390,6 +363,7 @@ def main() -> int:
         )
         gc.collect()
 
+    #write combined summary and warehouse log
     if len(rows) > 1:
         summary_file = root / "marker_heatmap_summary.csv"
         pd.DataFrame(rows).to_csv(summary_file, index=False)
@@ -397,7 +371,6 @@ def main() -> int:
 
     warehouse_file = append_warehouse(root, warehouse_rows)
     print(f"Warehouse log: {warehouse_file}")
-
     return 0
 
 

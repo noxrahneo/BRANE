@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""
-Script 49c: Extended z-score tagging for persistent network genes.
+"""Extended z-score cell-type tagging for persistent network genes.
 
-Pipeline order:
-1) Preflight diagnostics (mandatory)
-2) Build extended z-score matrices per condition (fine + coarse)
-3) Assign cell type per gene with thresholds (top score + margin)
-4) Resolve per pair and write tagged master tables
-5) Build coverage + hub diagnostics report
-
-STRICT RULE:
-- Stage 04 is read-only. This script never writes to results/04_annotation.
-- All outputs are written under results/20_node_annotation.
+Pipeline order: preflight → z-score matrices (fine + coarse) → label assignment
+→ per-pair tagged tables → coverage + hub diagnostics.
+Reads results/04_annotation (read-only); writes to results/20_node_annotation.
 """
 
 from __future__ import annotations
@@ -71,7 +63,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Script 49c: extended z-score tagging for persistent network genes"
+        description="Extended z-score cell-type tagging for persistent network genes"
     )
     parser.add_argument(
         "--preflight-only",
@@ -265,7 +257,7 @@ def run_preflight(
             if getattr(adata, "isbacked", False) and adata.file is not None:
                 adata.file.close()
 
-    # Threshold lowered from 0.70 — network genes not in HVG set simply get no cell type label
+    #threshold lowered from 0.70 — network genes not in HVG set simply get no cell type label
     low_overlap = [r for r in results if r.overlap_ratio < 0.40]
     if low_overlap:
         msg = "\n".join(
@@ -293,12 +285,7 @@ def build_extended_zscore(
     min_cells_per_type: int = 50,
     output_path: Path | None = None,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    """Build z-score matrix and return (matrix, cell_counts_dict).
-    
-    Returns:
-        (z_df, cell_counts): z_df has shape (n_genes, n_labels);
-                             cell_counts maps each label to its cell count
-    """
+    #build row-z-score matrix (genes x labels) and map labels to cell counts
     adata = sc.read_h5ad(h5ad_path)
 
     try:
@@ -362,7 +349,7 @@ def build_extended_zscore(
 
         z_df = pd.DataFrame(z_values, index=mean_df.index, columns=mean_df.columns)
 
-        # Build cell counts dict for passed labels
+        #build cell counts dict for passed labels
         cell_counts_dict = {str(label): int(label_counts[label]) for label in keep_labels}
 
         if output_path is not None:
@@ -381,13 +368,7 @@ def assign_cell_type(
     min_margin: float = 0.3,
     apply_confidence_penalty: bool = True,
 ) -> pd.DataFrame:
-    """Assign cell types from z-score matrix with optional cell-count confidence weighting.
-    
-    When apply_confidence_penalty=True, rare cell types are penalized by multiplying
-    their z-scores by: confidence = min(1.0, count / median_count_across_all_types)
-    
-    This prevents false positives from rare cell types with inflated variance.
-    """
+    #assign cell types by top z-score + margin; rare types penalized by count/median confidence
     if zscore_matrix.empty:
         return pd.DataFrame(
             columns=["gene", "cell_type", "top_zscore", "margin", "ct_source", "confidence_factor"]
@@ -396,7 +377,7 @@ def assign_cell_type(
     arr = zscore_matrix.to_numpy(dtype=float)
     col_names = np.array(zscore_matrix.columns, dtype=object)
 
-    # Apply confidence penalty if cell counts provided
+    #apply confidence penalty if cell counts provided
     confidence_factors = np.ones(len(col_names), dtype=float)
     if apply_confidence_penalty and cell_counts is not None:
         counts_arr = np.array([cell_counts.get(str(ct), 0) for ct in col_names], dtype=float)
@@ -409,7 +390,7 @@ def assign_cell_type(
                 median_count, confidence_factors.min(), confidence_factors.max()
             )
     
-    # Apply confidence factor to each column
+    #apply confidence factor to each column
     weighted_arr = arr * confidence_factors[np.newaxis, :]
 
     # argmax/top score on weighted array
@@ -629,14 +610,14 @@ def main() -> int:
 
     network_genes_by_condition = collect_network_genes_by_condition(pairs)
 
-    # Step 0
+    #step 0
     _, normalization_paths = run_preflight(pairs, network_genes_by_condition)
 
     if args.preflight_only:
         logging.info("Preflight-only mode enabled. Exiting after diagnostics.")
         return 0
 
-    # Step 1
+    #step 1
     logging.info("=== Step 1: Build extended z-score matrices ===")
     fine_z_by_cond: dict[str, pd.DataFrame] = {}
     fine_counts_by_cond: dict[str, dict[str, int]] = {}
@@ -671,7 +652,7 @@ def main() -> int:
             output_path=coarse_out,
         )
 
-    # Step 2
+    #step 2
     logging.info("=== Step 2: Assign gene labels from z-score matrices ===")
     fine_assignments: dict[str, pd.DataFrame] = {}
     coarse_assignments: dict[str, pd.DataFrame] = {}
@@ -692,7 +673,7 @@ def main() -> int:
             apply_confidence_penalty=True,
         )
 
-    # Step 2b: Assignment Statistics
+    #step 2b: Assignment Statistics
     logging.info("=== Step 2b: Cell-type assignment statistics ===")
     stats_records = []
     for cond in CONDITIONS:
@@ -701,7 +682,7 @@ def main() -> int:
         fine_counts = fine_counts_by_cond[cond]
         coarse_counts = coarse_counts_by_cond[cond]
 
-        # Fine-grained stats
+        #fine-grained stats
         n_fine_assigned = fine_assign["cell_type"].notna().sum()
         fine_ct_dist = fine_assign[fine_assign["cell_type"].notna()]["cell_type"].value_counts().to_dict()
         if fine_counts:
@@ -711,7 +692,7 @@ def main() -> int:
             fine_median_count = 0.0
             fine_cf_mean = 1.0
 
-        # Coarse-grained stats
+        #coarse-grained stats
         n_coarse_assigned = coarse_assign["cell_type"].notna().sum()
         coarse_ct_dist = coarse_assign[coarse_assign["cell_type"].notna()]["cell_type"].value_counts().to_dict()
         if coarse_counts:
@@ -762,7 +743,7 @@ def main() -> int:
     stats_df.to_csv(stats_path, index=False)
     logging.info("Assignment statistics saved: %s", stats_path)
 
-    # Step 3
+    #step 3
     logging.info("=== Step 3: Resolve pair annotations ===")
     tagged_by_pair: dict[str, pd.DataFrame] = {}
 
@@ -779,7 +760,7 @@ def main() -> int:
         logging.info("[%s] Tagged output written: %s", pair, out_file)
         tagged_by_pair[pair] = tagged
 
-    # Step 4
+    #step 4
     logging.info("=== Step 4: Coverage and hub diagnostics ===")
     report = build_coverage_report(tagged_by_pair)
     report_path = OUTPUT_DIR / "coverage_report.csv"

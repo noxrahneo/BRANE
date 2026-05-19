@@ -108,18 +108,19 @@ def load_include_mask(mask_csv: str, include_col: str) -> set[str] | None:
     return keep_ids
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and load optional include mask
     pb_root = resolve(args.pseudobulk_dir)
     out_root = resolve(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
     include_ids = load_include_mask(args.include_mask_csv, args.include_col)
 
+    #find all per-condition pseudobulk dirs
     condition_dirs = list_condition_dirs(pb_root)
     if not condition_dirs:
-        raise FileNotFoundError(
-            f"No condition directories found in: {pb_root}"
-        )
+        raise FileNotFoundError(f"No condition directories found in: {pb_root}")
 
     wrote = 0
     for cdir in condition_dirs:
@@ -130,21 +131,19 @@ def main() -> None:
         if not counts_file.exists() or not meta_file.exists():
             continue
 
+        #load counts and metadata, align profile ids, apply include mask
         counts = pd.read_csv(counts_file, index_col=0)
         meta = pd.read_csv(meta_file)
         if "pseudobulk_id" not in meta.columns:
             raise ValueError(f"Missing pseudobulk_id in {meta_file}")
 
-        profile_ids = [
-            pid
-            for pid in meta["pseudobulk_id"].tolist()
-            if pid in counts.columns
-        ]
+        profile_ids = [pid for pid in meta["pseudobulk_id"].tolist() if pid in counts.columns]
         if include_ids is not None:
             profile_ids = [pid for pid in profile_ids if pid in include_ids]
         if not profile_ids:
             continue
 
+        #normalise to logcpm and build anndata
         counts = counts[profile_ids]
         meta = meta.set_index("pseudobulk_id").loc[profile_ids]
         logcpm = normalize_logcpm(counts, args.target_sum)
@@ -157,22 +156,17 @@ def main() -> None:
         adata.obs_names = logcpm.columns.astype(str)
         adata.var_names = logcpm.index.astype(str)
         adata.layers["counts"] = counts.T.values
+        adata.uns["normalization"] = {"method": "log1p_cpm", "target_sum": float(args.target_sum)}
 
-        adata.uns["normalization"] = {
-            "method": "log1p_cpm",
-            "target_sum": float(args.target_sum),
-        }
-
+        #save h5ad
         out_file = out_root / f"{condition}_pseudobulk_logcpm.h5ad"
         adata.write_h5ad(out_file)
         wrote += 1
         print(f"[{condition}] wrote {out_file}")
 
-    print(
-        "Done. Wrote "
-        f"{wrote} normalized condition h5ad files to: {out_root}"
-    )
+    print(f"Done. Wrote {wrote} normalized condition h5ad files to: {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

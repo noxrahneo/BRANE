@@ -1,37 +1,4 @@
-#!/usr/bin/env python3
-"""
-Script 47: Prepare visualization assets for 20_node_annotation.
-
-For each CSD network pair assembles annotated node tables, tier-specific PNGs,
-and an interactive HTML network from template.html.
-
-INPUTS (per pair):
-  14_csd_networks/{pair}/
-    {pair}_node_homogeneity_permutation.csv  -- topology + DEG stats for all nodes
-    {pair}_differential_edges_permutation.csv -- edges with link_type (C/D/S)
-    {pair}_leiden_modules.tsv                -- module assignments
-    {pair}_top_hubs_permutation.csv          -- top 50 hub genes overall
-  20_node_annotation/03_output_with_lfc/{pair}_tagged_with_lfc.csv
-
-OUTPUTS (per pair) in 20_node_annotation/{pair}/:
-  nodes.csv                  -- topology + DEG + cell type + cancer gene
-  modules.csv                -- module-level summary
-  network_summary.csv        -- key network statistics
-  hubs_overall.csv           -- top hubs, fully annotated
-  hubs_D.csv                 -- hubs within D-tier subnetwork
-  hubs_S_case.csv            -- hubs within S_case-tier subnetwork
-  hubs_S_ctrl.csv            -- hubs within S_ctrl-tier subnetwork
-  network_annotated.html     -- interactive vis-network (template.html-based)
-  figures/
-    full_annotated.png       -- all edges, nodes coloured by module
-    tier_CD.png              -- C + D edges (community layout)
-    tier_D.png               -- D edges only (community layout)
-    tier_S_case.png          -- S_case edges only (community layout)
-    tier_S_ctrl.png          -- S_ctrl edges only (community layout)
-    modules_case.png         -- case co-expression (C + S_case), annotated
-    modules_ctrl.png         -- normal co-expression (C + S_ctrl), annotated
-    modules_shared.png       -- conserved co-expression (C only), annotated
-"""
+"""Prepare annotated node tables, hub rankings, module summaries, and network HTML/PNG outputs per CSD pair."""
 
 from __future__ import annotations
 
@@ -67,7 +34,7 @@ PAIRS = [
     "Triple_negative_tumor__vs__Normal",
 ]
 
-# Short prefix added to every output file inside the pair folder, so files are
+#short prefix added to every output file inside the pair folder, so files are
 # self-identifying even when viewed or copied outside their parent directory.
 PAIR_SHORT = {
     "ER_tumor__vs__Normal":                                           "ER",
@@ -83,7 +50,7 @@ TOP_LABEL_N = 40
 MIN_MOD_SIZE_FULL = 15   # minimum module size to display in full/CD/modules views
 MIN_MOD_SIZE_TIER = 5    # relaxed threshold for tier-specific views
 
-# Edge colors and labels for legend — S_case and S_ctrl share the same visual S color
+#edge colors and labels for legend — S_case and S_ctrl share the same visual S color
 EDGE_COLORS = {
     "C": "#2b6fb0",
     "D": "#e63946",
@@ -141,9 +108,7 @@ def ct_display_name(ct: str | None) -> str:
     return CT_DISPLAY_NAMES.get(key, str(ct).replace("_", " ").title())
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
+#data loading
 
 def load_edges(pair: str) -> pd.DataFrame:
     path = CSD_DIR / pair / f"{pair}_differential_edges_permutation.csv"
@@ -195,9 +160,7 @@ def load_hubs_raw(pair: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-# ---------------------------------------------------------------------------
-# Nodes, modules, hubs, summary assembly
-# ---------------------------------------------------------------------------
+#nodes, modules, hubs, summary assembly
 
 def build_nodes_df(pair: str) -> pd.DataFrame:
     homo = load_homogeneity(pair)
@@ -337,9 +300,7 @@ def build_hubs_overall(pair: str, nodes_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------------------
-# Layout and drawing utilities
-# ---------------------------------------------------------------------------
+#layout and drawing utilities
 
 def module_color(mod_id: int | None) -> str:
     if mod_id is None:
@@ -362,9 +323,7 @@ def top_hub_genes(g: nx.Graph, n: int) -> list[str]:
 
 
 def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7) -> dict[str, tuple[float, float]]:
-    """Communities arranged via spring on a meta-graph; spring within each community.
-    Copied from script 32 (same algorithm, same seed behaviour).
-    """
+    #spring layout on inter-module meta-graph for centroids; spring within each module
     buckets: dict[int, list[str]] = {}
     for node, mod in node_to_module.items():
         if node in g:
@@ -433,7 +392,7 @@ def _build_graph_from_edges(
             continue
         w = float(r.get("weight", 1.0)) if pd.notna(r.get("weight")) else 1.0
         lt = str(r.get("link_type_detail", "C"))
-        # Collapse S_case/S_ctrl to "S" for visual edge colouring (same green)
+        #collapse S_case/S_ctrl to "S" for visual edge colouring (same green)
         lt_visual = "S" if lt.startswith("S") else lt
         g.add_edge(a, b, weight=w, link_type=lt_visual)
     return g
@@ -447,7 +406,7 @@ def _build_legends(
     mod_sizes: dict[int, int],
     edge_types_present: set[str],
 ) -> None:
-    """Build a single merged legend panel on the right side of the figure."""
+    #build a single merged legend panel on the right side of the figure
 
     all_handles: list = []
     all_labels: list[str] = []
@@ -539,7 +498,7 @@ def draw_annotated_network(
     use_community_layout: bool = True,
     min_mod_size: int = MIN_MOD_SIZE_FULL,
 ) -> None:
-    """Draw CSD network: module fill + cell type borders + cancer/DEG labels + 4 legends."""
+    #draw CSD network: module fill + cell type borders + cancer/DEG labels + 4 legends
     if g.number_of_nodes() == 0:
         return
 
@@ -550,7 +509,7 @@ def draw_annotated_network(
             if gene:
                 node_info[gene] = r.to_dict()
 
-    # Filter to large modules (same as script 32)
+    #filter to large modules (same as script 32)
     mod_sizes: dict[int, int] = {}
     for n in g.nodes():
         mid = modules_map.get(n)
@@ -569,7 +528,7 @@ def draw_annotated_network(
     if g.number_of_nodes() == 0:
         return
 
-    # Recalculate mod_sizes after filter for legend
+    #recalculate mod_sizes after filter for legend
     mod_sizes_display: dict[int, int] = {}
     for n in g.nodes():
         mid = modules_map.get(n)
@@ -590,7 +549,7 @@ def draw_annotated_network(
 
     fig, ax = plt.subplots(1, 1, figsize=(14, 20))
 
-    # Edges by CSD type
+    #edges by CSD type
     edge_types_present: set[str] = set()
     for csd_type, color in EDGE_COLORS.items():
         elist = [(u, v) for u, v, d in g.edges(data=True) if d.get("link_type") == csd_type]
@@ -603,7 +562,7 @@ def draw_annotated_network(
                            node_color=fills, node_size=sz, alpha=0.88,
                            linewidths=1.8, edgecolors=borders)
 
-    # Labels: top hub genes, bold, with cancer/DEG symbols — adjustText for overlap
+    #labels: top hub genes, bold, with cancer/DEG symbols — adjustText for overlap
     hubs = set(top_hub_genes(g, TOP_LABEL_N))
     cancer_sym = {"oncogene": "★", "tsg": "▲", "Oncogene": "★", "TSG": "▲"}
     dir_sym = {"up": "↑", "down": "↓", "unchanged": "−"}
@@ -631,7 +590,7 @@ def draw_annotated_network(
                 force_points=(0.2, 0.3),
             )
 
-    # Tighten axes to actual node positions — removes dead space around clusters
+    #tighten axes to actual node positions — removes dead space around clusters
     xs = [pos[n][0] for n in pos]
     ys = [pos[n][1] for n in pos]
     mx = (max(xs) - min(xs)) * 0.01
@@ -658,13 +617,13 @@ def draw_top6_module_panels(
     out_path: Path,
     hub_genes: set[str] | None = None,
 ) -> None:
-    """3×2 grid showing the top 6 modules from the tier subnetwork, one subplot each."""
+    #3×2 grid showing the top 6 modules from the tier subnetwork, one subplot each
     g_tier = _build_graph_from_edges(edges_df, tier_filter=[tier])
     if g_tier.number_of_nodes() == 0:
         logging.warning("  %s tier %s: empty — skipping module panels", pair, tier)
         return
 
-    # Count how many tier-graph nodes fall in each module
+    #count how many tier-graph nodes fall in each module
     mod_sizes_in_tier: dict[int, int] = {}
     for n in g_tier.nodes():
         mid = modules_map.get(n)
@@ -675,7 +634,7 @@ def draw_top6_module_panels(
         logging.warning("  %s tier %s: no module assignments — skipping", pair, tier)
         return
 
-    # Exclude singletons and doubletons — only modules with ≥ 3 nodes
+    #exclude singletons and doubletons — only modules with ≥ 3 nodes
     top6 = sorted(
         [(mid, sz) for mid, sz in mod_sizes_in_tier.items() if sz >= 3],
         key=lambda x: x[1], reverse=True
@@ -716,7 +675,7 @@ def draw_top6_module_panels(
             continue
 
         g_mod = g_tier.subgraph(mod_nodes).copy()
-        # Remove isolated nodes (degree 0 within the module tier subgraph)
+        #remove isolated nodes (degree 0 within the module tier subgraph)
         isolated = [n for n in g_mod.nodes() if g_mod.degree(n) == 0]
         if isolated:
             g_mod = g_mod.copy()
@@ -732,7 +691,7 @@ def draw_top6_module_panels(
         borders = [cell_type_border_color(node_info.get(n, {}).get("cell_type")) for n in node_list]
         sz = [sizes.get(n, 30.0) for n in node_list]
 
-        # Collect all cell types present for shared legend
+        #collect all cell types present for shared legend
         for n in node_list:
             ct_raw = node_info.get(n, {}).get("cell_type")
             if ct_raw and str(ct_raw).lower() not in {"nan", "none", ""}:
@@ -743,7 +702,7 @@ def draw_top6_module_panels(
 
         nx.draw_networkx_edges(g_mod, pos, ax=ax,
                                edge_color=tier_color, alpha=0.25, width=0.5)
-        # All nodes keep cell type border; hub nodes drawn larger on top
+        #all nodes keep cell type border; hub nodes drawn larger on top
         non_hub_list = [n for n in node_list if n not in hubs_in_mod]
         hub_list = [n for n in node_list if n in hubs_in_mod]
         if non_hub_list:
@@ -759,7 +718,7 @@ def draw_top6_module_panels(
                                    alpha=1.0, linewidths=2.5,
                                    edgecolors=[borders[node_list.index(n)] for n in hub_list])
 
-        # Labels: hub genes always labelled with ◆ prefix, red bold; degree hubs smaller
+        #labels: hub genes always labelled with ◆ prefix, red bold; degree hubs smaller
         n_extra = max(5, min(15, len(node_list) // 5))
         degree_hubs = set(top_hub_genes(g_mod, n_extra))
         label_set = hubs_in_mod | degree_hubs
@@ -785,7 +744,7 @@ def draw_top6_module_panels(
                             arrowprops=dict(arrowstyle="-", color="#aaaaaa", lw=0.4),
                             expand_text=(1.2, 1.4), expand_points=(1.1, 1.2))
 
-        # Dominant cell type for subtitle
+        #dominant cell type for subtitle
         ct_counts: dict[str, int] = {}
         for n in node_list:
             ct = node_info.get(n, {}).get("cell_type")
@@ -799,7 +758,7 @@ def draw_top6_module_panels(
             fontsize=9, fontweight="bold", pad=4,
         )
 
-        # Force square data range so spring layout appears circular
+        #force square data range so spring layout appears circular
         xs = [pos[n][0] for n in pos]
         ys = [pos[n][1] for n in pos]
         cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
@@ -816,7 +775,7 @@ def draw_top6_module_panels(
         )
         ax.axis("off")
 
-    # Shared bottom legend: Leiden modules + cell type borders + annotation symbols
+    #shared bottom legend: Leiden modules + cell type borders + annotation symbols
     ct_handles = [
         Line2D([0], [0], marker="o", color="none",
                markerfacecolor="none",
@@ -869,7 +828,7 @@ def build_annotated_pngs(
     display_name = pair.replace("__vs__", " vs ")
     p = f"{prefix}_" if prefix else ""
 
-    # Each entry: (filename_stem, tier_filter, use_community_layout, min_mod_size, title_suffix)
+    #each entry: (filename_stem, tier_filter, use_community_layout, min_mod_size, title_suffix)
     # 5 figures per network — each maps directly to a results section paragraph
     configs = [
         (
@@ -918,7 +877,7 @@ def build_annotated_pngs(
             min_mod_size=min_mod,
         )
 
-    # Top 6 module panels — one 3×2 figure per tier; hub genes highlighted
+    #top 6 module panels — one 3×2 figure per tier; hub genes highlighted
     for tier, stem in [("D", "modules_D"), ("S_case", "modules_S_case"), ("S_ctrl", "modules_S_ctrl")]:
         tier_hubs_set = set(_tier_hubs(edges_df, nodes_df, tier)["gene"].tolist()
                             if "gene" in _tier_hubs(edges_df, nodes_df, tier).columns else [])
@@ -929,9 +888,7 @@ def build_annotated_pngs(
         )
 
 
-# ---------------------------------------------------------------------------
-# Interactive HTML generation
-# ---------------------------------------------------------------------------
+#interactive HTML generation
 
 def _html_node_obj(row: pd.Series, modules_map: dict[str, int]) -> dict:
     gene = str(row.get("gene", ""))
@@ -1030,9 +987,7 @@ def build_interactive_html(
     return html
 
 
-# ---------------------------------------------------------------------------
-# Per-pair orchestration
-# ---------------------------------------------------------------------------
+#per-pair orchestration
 
 _STALE_PNG_NAMES = {
     "full_annotated.png", "full_network.png",
@@ -1045,7 +1000,7 @@ _STALE_PNG_NAMES = {
 
 
 def _cleanup_stale_files(pair_dir: Path, pair: str) -> None:
-    """Remove stale files left by earlier script runs (old pair-prefixed CSVs, old unprefixed PNGs)."""
+    #remove stale files left by earlier script runs (old pair-prefixed CSVs, old unprefixed PNGs)
     for f in pair_dir.glob(f"{pair}_*.csv"):
         f.unlink()
         logging.info("  removed stale %s", f.name)
@@ -1089,11 +1044,11 @@ def process_pair(pair: str) -> None:
         hubs.to_csv(pair_dir / fname, index=False)
         logging.info("  %s (%d hubs)", fname, len(hubs))
 
-    # Annotated PNGs — all files prefixed with short name
+    #annotated PNGs — all files prefixed with short name
     build_annotated_pngs(pair, edges_df, nodes_df, modules_map,
                          pair_dir / "figures", prefix=prefix)
 
-    # Interactive HTML
+    #interactive HTML
     try:
         html = build_interactive_html(pair, edges_df, nodes_df, modules_map)
         (pair_dir / f"{prefix}_network_annotated.html").write_text(html, encoding="utf-8")
@@ -1101,29 +1056,32 @@ def process_pair(pair: str) -> None:
     except Exception as exc:
         logging.error("  HTML generation failed for %s: %s", pair, exc)
 
-    # Clean up stale files from earlier runs
+    #clean up stale files from earlier runs
     _cleanup_stale_files(pair_dir, pair)
 
 
-def main() -> None:
+def main() -> int:
     configure_logging()
-    logging.info("Script 47: Preparing visualization assets")
+    logging.info("preparing visualization assets for %d pairs", len(PAIRS))
 
+    #check lfc inputs exist before processing
     missing_lfc = [p for p in PAIRS if not (LFC_DIR / f"{p}_tagged_with_lfc.csv").exists()]
     if missing_lfc:
-        logging.error("Missing LFC files (run script 46 first): %s", missing_lfc)
-        return
+        logging.error("missing LFC files (run 35_lfc_annotation.py first): %s", missing_lfc)
+        return 1
 
+    #process each pair
     done = 0
     for pair in PAIRS:
         try:
             process_pair(pair)
             done += 1
         except Exception as exc:
-            logging.exception("Failed for %s: %s", pair, exc)
+            logging.exception("failed for %s: %s", pair, exc)
 
-    logging.info("Completed %d/%d pairs", done, len(PAIRS))
+    logging.info("completed %d/%d pairs", done, len(PAIRS))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

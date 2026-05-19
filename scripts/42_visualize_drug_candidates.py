@@ -1,13 +1,5 @@
-#!/usr/bin/env python3
-"""
-Visualize drug candidate results with multiple plot types.
+"""Visualisation plots for drug candidate scores and interaction networks."""
 
-Usage:
-  python 51_visualize_drug_candidates.py \
-    --input-dir results/24_drug_targets \
-    --output-dir results/24_drug_targets/visualizations \
-    --top-n 15
-"""
 
 import argparse
 import json
@@ -22,31 +14,31 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec
 import networkx as nx
 
-# Set style
+#set style
 sns.set_style("whitegrid")
 plt.rcParams["figure.figsize"] = (16, 12)
 plt.rcParams["font.size"] = 10
 
 
 def load_data(input_dir):
-    """Load drug candidates and summary data."""
+    #load drug candidates and summary data
     input_path = Path(input_dir)
     
-    # Load ranked candidates
+    #load ranked candidates
     candidates_file = input_path / "05_drug_candidates_ranked.csv"
     if not candidates_file.exists():
         raise FileNotFoundError(f"Missing: {candidates_file}")
     
     candidates_df = pd.read_csv(candidates_file)
     
-    # Load summary
+    #load summary
     summary_file = input_path / "06_summary.json"
     summary = {}
     if summary_file.exists():
         with open(summary_file) as f:
             summary = json.load(f)
     
-    # Load interactions
+    #load interactions
     interactions_file = input_path / "03_hub_gene_drug_interactions_raw.csv"
     interactions_df = None
     if interactions_file.exists():
@@ -56,12 +48,12 @@ def load_data(input_dir):
 
 
 def plot_top_candidates_bar(candidates_df, top_n=15, ax=None):
-    """Bar chart of top N candidates by score."""
+    #bar chart of top N candidates by score
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 6))
     
     top_df = candidates_df.head(top_n).copy()
-    top_df = top_df.sort_values("candidate_score", ascending=True)  # For horizontal bar
+    top_df = top_df.sort_values("candidate_score", ascending=True)  #for horizontal bar chart (ascending = bottom-up)
     
     colors = plt.cm.RdYlGn(np.linspace(0.3, 0.9, len(top_df)))
     bars = ax.barh(range(len(top_df)), top_df["candidate_score"], color=colors)
@@ -72,7 +64,7 @@ def plot_top_candidates_bar(candidates_df, top_n=15, ax=None):
     ax.set_title(f"Top {top_n} Drug Candidates", fontsize=12, fontweight="bold")
     ax.grid(axis="x", alpha=0.3)
     
-    # Add score labels
+    #add score labels
     for i, (idx, row) in enumerate(top_df.iterrows()):
         ax.text(row["candidate_score"] + 1, i, f"{row['candidate_score']:.1f}", va="center", fontsize=9)
     
@@ -80,11 +72,11 @@ def plot_top_candidates_bar(candidates_df, top_n=15, ax=None):
 
 
 def plot_approval_status(candidates_df, ax=None):
-    """Pie chart of drug approval status."""
+    #pie chart of drug approval status
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
     
-    # Count approval statuses - check if we have true/false values
+    #count approval statuses - check if we have true/false values
     approval_counts = candidates_df["approved_any"].value_counts()
     
     colors = {True: "#2ecc71", False: "#95a5a6"}
@@ -106,13 +98,13 @@ def plot_approval_status(candidates_df, ax=None):
 
 
 def plot_score_composition(candidates_df, top_n=10, ax=None):
-    """Stacked bar showing score component breakdown."""
+    #stacked bar showing score component breakdown
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 6))
     
     top_df = candidates_df.head(top_n).copy()
     
-    # Estimate component contributions
+    #estimate component contributions
     components = {
         "hub_targets": top_df["hub_genes_targeted"] * 2.2,
         "pair_coverage": top_df["pair_coverage"] * 1.5,
@@ -140,11 +132,11 @@ def plot_score_composition(candidates_df, top_n=10, ax=None):
 
 
 def plot_hub_count_vs_score(candidates_df, ax=None):
-    """Scatter plot: hub count vs rank score."""
+    #scatter plot: hub count vs rank score
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Color by approval status
+    #color by approval status
     colors = ["#2ecc71" if approved else "#95a5a6" for approved in candidates_df["approved_any"]]
     
     scatter = ax.scatter(
@@ -162,7 +154,7 @@ def plot_hub_count_vs_score(candidates_df, ax=None):
     ax.set_title("Hub Count vs Score (size = interaction count)", fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3)
     
-    # Add legend for approval status
+    #add legend for approval status
     ax.scatter([], [], s=100, c="#2ecc71", label="Approved", edgecolors="black", linewidth=0.5)
     ax.scatter([], [], s=100, c="#95a5a6", label="Not Approved", edgecolors="black", linewidth=0.5)
     ax.legend(title="Status", fontsize=9)
@@ -171,11 +163,11 @@ def plot_hub_count_vs_score(candidates_df, ax=None):
 
 
 def plot_interaction_source_distribution(candidates_df, ax=None):
-    """Bar chart showing DGIdb interaction sources."""
+    #bar chart showing DGIdb interaction sources
     if ax is None:
         fig, ax = plt.subplots(figsize=(12, 6))
     
-    # Parse interaction_sources (comma-separated)
+    #parse interaction_sources (comma-separated)
     source_counts = {}
     for sources_str in candidates_df["source_dbs"].fillna(""):
         if isinstance(sources_str, str):
@@ -200,11 +192,7 @@ def plot_interaction_source_distribution(candidates_df, ax=None):
 
 
 def _bipartite_positions(G, left_nodes, right_nodes, left_x=-1.4, right_x=1.4, y_span=None):
-    """Create deterministic two-column positions for bipartite graphs.
-
-    y_span is computed dynamically so that nodes always have at least 0.28 units
-    of vertical separation regardless of how many nodes are on the taller side.
-    """
+    #create deterministic two-column positions for bipartite graphs
     left_sorted = sorted(left_nodes, key=lambda n: (-G.degree(n), str(n)))
     right_sorted = sorted(right_nodes, key=lambda n: (-G.degree(n), str(n)))
 
@@ -228,20 +216,20 @@ def _bipartite_positions(G, left_nodes, right_nodes, left_x=-1.4, right_x=1.4, y
 
 
 def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
-    """Network diagram showing drug-gene connections in a readable bipartite layout."""
+    #network diagram showing drug-gene connections in a readable bipartite layout
     if ax is None:
-        # Scale figure height so nodes have room: at least 0.5 inches per drug node
+        #scale figure height so nodes have room: at least 0.5 inches per drug node
         n_drugs = min(top_n, len(candidates_df))
         fig_height = max(14, n_drugs * 0.55)
         fig, ax = plt.subplots(figsize=(22, fig_height))
     
-    # Create network graph
+    #create network graph
     G = nx.Graph()
     
-    # Use top candidates
+    #use top candidates
     top_drugs = candidates_df.head(top_n)
     
-    # Parse gene targets from hub_genes column
+    #parse gene targets from hub_genes column
     for _, drug_row in top_drugs.iterrows():
         drug_name = drug_row["canonical_drug_name"]
         # targeted_hub_genes is comma-separated or single gene
@@ -256,14 +244,14 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
         ax.text(0.5, 0.5, "No network data available", ha="center", va="center", transform=ax.transAxes)
         return ax.get_figure() if ax is None else None
     
-    # Separate drugs and genes
+    #separate drugs and genes
     drug_nodes = [n for n in G.nodes() if n in top_drugs["canonical_drug_name"].values]
     gene_nodes = [n for n in G.nodes() if n not in drug_nodes]
     
-    # Deterministic bipartite layout: drugs on left, genes on right.
+    #deterministic bipartite layout: drugs on left, genes on right.
     pos = _bipartite_positions(G, drug_nodes, gene_nodes, left_x=-1.4, right_x=1.4)
     
-    # Draw edges with varying thickness based on score
+    #draw edges with varying thickness based on score
     edge_weights = [min(3.5, max(0.6, G[u][v]["weight"] / 20.0)) for u, v in G.edges()]
     nx.draw_networkx_edges(
         G,
@@ -275,7 +263,7 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
         connectionstyle="arc3,rad=0.06",
     )
     
-    # Get colors for drugs based on approval status
+    #get colors for drugs based on approval status
     drug_colors = {}
     for _, drug_row in top_drugs.iterrows():
         if drug_row["approved_any"]:
@@ -286,7 +274,7 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
     drug_node_colors = [drug_colors.get(n, "#95a5a6") for n in drug_nodes]
     gene_node_colors = ["#3498db"] * len(gene_nodes)
     
-    # Draw drugs - larger nodes
+    #draw drugs - larger nodes
     nx.draw_networkx_nodes(
         G,
         pos,
@@ -299,7 +287,7 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
         alpha=0.95,
     )
     
-    # Draw genes - smaller square nodes
+    #draw genes - smaller square nodes
     nx.draw_networkx_nodes(
         G,
         pos,
@@ -313,7 +301,7 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
         alpha=0.95,
     )
     
-    # Put labels outside nodes to avoid stacking text over marker shapes.
+    #put labels outside nodes to avoid stacking text over marker shapes.
     for node in drug_nodes:
         x_val, y_val = pos[node]
         label = node[:28] + "..." if len(node) > 28 else node
@@ -348,7 +336,7 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
     ax.set_title(f"Drug-Gene Network (Top {top_n} Candidates, Bipartite Layout)", fontsize=14, fontweight="bold", pad=20)
     ax.axis("off")
     
-    # Add legend
+    #add legend
     from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ecc71", markersize=12, label="Approved Drug", markeredgecolor="black", markeredgewidth=1.5),
@@ -361,14 +349,14 @@ def plot_drug_gene_network(candidates_df, top_n=15, ax=None):
 
 
 def plot_drug_gene_heatmap(candidates_df, top_n=20, ax=None):
-    """Heatmap of drugs × genes with interaction counts."""
+    #heatmap of drugs × genes with interaction counts
     if ax is None:
         fig, ax = plt.subplots(figsize=(14, 8))
     
-    # Get top candidates
+    #get top candidates
     top_drugs = candidates_df.head(top_n).copy()
     
-    # Build matrix: drugs × genes
+    #build matrix: drugs × genes
     drugs = []
     genes_all = set()
     drug_gene_counts = {}
@@ -393,13 +381,13 @@ def plot_drug_gene_heatmap(candidates_df, top_n=20, ax=None):
         ax.text(0.5, 0.5, "No heatmap data available", ha="center", va="center", transform=ax.transAxes)
         return ax.get_figure() if ax is None else None
     
-    # Create matrix
+    #create matrix
     matrix = np.zeros((len(drugs), len(genes)))
     for i, drug in enumerate(drugs):
         for j, gene in enumerate(genes):
             matrix[i, j] = drug_gene_counts.get((drug, gene), 0)
     
-    # Plot heatmap
+    #plot heatmap
     sns.heatmap(matrix, xticklabels=genes, yticklabels=drugs, cmap="YlOrRd", 
                ax=ax, cbar_kws={"label": "Interaction Score"}, annot=True, fmt=".1f", linewidths=0.5)
     
@@ -411,13 +399,13 @@ def plot_drug_gene_heatmap(candidates_df, top_n=20, ax=None):
 
 
 def plot_summary_stats(summary, ax=None):
-    """Text summary of key statistics."""
+    #text summary of key statistics
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 6))
     
     ax.axis("off")
     
-    # Format text
+    #format text
     stats_text = f"""
 DRUG CANDIDATE ANALYSIS SUMMARY
 
@@ -445,11 +433,11 @@ Pipeline Status:           {summary.get('status', 'N/A').upper()}
 
 
 def create_comprehensive_figure(candidates_df, summary, output_path):
-    """Create a comprehensive multi-panel figure."""
+    #create a comprehensive multi-panel figure
     fig = plt.figure(figsize=(18, 14))
     gs = GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
     
-    # Panel 1: Top candidates
+    #panel 1: Top candidates
     ax1 = fig.add_subplot(gs[0:2, 0:2])
     top_df = candidates_df.head(15).copy()
     top_df = top_df.sort_values("candidate_score", ascending=True)
@@ -461,7 +449,7 @@ def create_comprehensive_figure(candidates_df, summary, output_path):
     ax1.set_title("Top 15 Drug Candidates", fontweight="bold", fontsize=12)
     ax1.grid(axis="x", alpha=0.3)
     
-    # Panel 2: Approval status pie
+    #panel 2: Approval status pie
     ax2 = fig.add_subplot(gs[0, 2])
     approval_counts = candidates_df["approved_any"].value_counts()
     colors_pie = ["#2ecc71", "#95a5a6"]
@@ -469,7 +457,7 @@ def create_comprehensive_figure(candidates_df, summary, output_path):
     ax2.pie(approval_counts.values, labels=labels_pie, autopct="%1.0f%%", colors=colors_pie[:len(approval_counts)])
     ax2.set_title("Approval Status", fontweight="bold", fontsize=11)
     
-    # Panel 3: Hub count vs score
+    #panel 3: Hub count vs score
     ax3 = fig.add_subplot(gs[1, 2])
     colors_scatter = ["#2ecc71" if approved else "#95a5a6" for approved in candidates_df["approved_any"]]
     ax3.scatter(candidates_df["hub_genes_targeted"].astype(int), candidates_df["candidate_score"], 
@@ -479,7 +467,7 @@ def create_comprehensive_figure(candidates_df, summary, output_path):
     ax3.set_title("Hubs vs Score", fontweight="bold", fontsize=11)
     ax3.grid(True, alpha=0.3)
     
-    # Panel 4: Statistics
+    #panel 4: Statistics
     ax4 = fig.add_subplot(gs[2, :])
     ax4.axis("off")
     stats_text = f"""Pairs: {summary.get('pairs_processed', 'N/A')} | Hubs: {summary.get('combined_hubs', 'N/A')} | Raw Interactions: {summary.get('raw_interactions', 'N/A')} | Candidates: {summary.get('drug_candidates', 'N/A')} | Status: {summary.get('status', 'N/A')}"""
@@ -491,7 +479,7 @@ def create_comprehensive_figure(candidates_df, summary, output_path):
     return fig
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Visualize drug candidate results")
     parser.add_argument("--input-dir", required=True, help="Input directory with drug results")
     parser.add_argument("--output-dir", required=True, help="Output directory for visualizations")
@@ -499,16 +487,16 @@ def main():
     parser.add_argument("--dpi", type=int, default=300, help="DPI for saved figures")
     args = parser.parse_args()
     
-    # Create output directory
+    #create output directory
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Load data
+    #load data
     print(f"Loading data from {args.input_dir}...", file=sys.stderr)
     candidates_df, summary, interactions_df = load_data(args.input_dir)
     print(f"  Loaded {len(candidates_df)} candidates", file=sys.stderr)
     
-    # Create comprehensive figure
+    #create comprehensive figure
     print("Creating comprehensive summary figure...", file=sys.stderr)
     fig = create_comprehensive_figure(candidates_df, summary, output_path)
     comprehensive_path = output_path / "01_comprehensive_summary.png"
@@ -516,38 +504,38 @@ def main():
     print(f"  Saved: {comprehensive_path}", file=sys.stderr)
     plt.close(fig)
     
-    # Create individual plots
+    #create individual plots
     print("Creating individual detail plots...", file=sys.stderr)
     
-    # Plot 1: Top candidates
+    #plot 1: Top candidates
     fig = plt.figure(figsize=(12, 7))
     plot_top_candidates_bar(candidates_df, top_n=args.top_n, ax=plt.gca())
     fig.savefig(output_path / "02_top_candidates_bar.png", dpi=args.dpi, bbox_inches="tight")
     print(f"  Saved: 02_top_candidates_bar.png", file=sys.stderr)
     plt.close(fig)
     
-    # Plot 2: Approval status
+    #plot 2: Approval status
     fig = plt.figure(figsize=(8, 6))
     plot_approval_status(candidates_df, ax=plt.gca())
     fig.savefig(output_path / "03_approval_status_pie.png", dpi=args.dpi, bbox_inches="tight")
     print(f"  Saved: 03_approval_status_pie.png", file=sys.stderr)
     plt.close(fig)
     
-    # Plot 3: Hub vs score
+    #plot 3: Hub vs score
     fig = plt.figure(figsize=(10, 7))
     plot_hub_count_vs_score(candidates_df, ax=plt.gca())
     fig.savefig(output_path / "04_hub_count_vs_score.png", dpi=args.dpi, bbox_inches="tight")
     print(f"  Saved: 04_hub_count_vs_score.png", file=sys.stderr)
     plt.close(fig)
     
-    # Plot 4: Score composition
+    #plot 4: Score composition
     fig = plt.figure(figsize=(12, 7))
     plot_score_composition(candidates_df, top_n=args.top_n, ax=plt.gca())
     fig.savefig(output_path / "05_score_composition.png", dpi=args.dpi, bbox_inches="tight")
     print(f"  Saved: 05_score_composition.png", file=sys.stderr)
     plt.close(fig)
     
-    # Plot 5: Interaction sources
+    #plot 5: Interaction sources
     if not candidates_df["source_dbs"].isna().all():
         fig = plt.figure(figsize=(12, 7))
         plot_interaction_source_distribution(candidates_df, ax=plt.gca())
@@ -555,14 +543,14 @@ def main():
         print(f"  Saved: 06_interaction_sources.png", file=sys.stderr)
         plt.close(fig)
     
-    # Plot 6: Summary stats
+    #plot 6: Summary stats
     fig = plt.figure(figsize=(10, 6))
     plot_summary_stats(summary, ax=plt.gca())
     fig.savefig(output_path / "07_summary_stats.png", dpi=args.dpi, bbox_inches="tight")
     print(f"  Saved: 07_summary_stats.png", file=sys.stderr)
     plt.close(fig)
     
-    # Plot 7: Drug-gene network
+    #plot 7: Drug-gene network
     print("Creating drug-gene network diagram...", file=sys.stderr)
     n_net = min(15, len(candidates_df))
     n_drug_nodes = n_net
@@ -573,7 +561,7 @@ def main():
     print(f"  Saved: 08_drug_gene_network.png", file=sys.stderr)
     plt.close(fig)
     
-    # Plot 8: Drug-gene heatmap
+    #plot 8: Drug-gene heatmap
     print("Creating drug-gene heatmap...", file=sys.stderr)
     fig = plt.figure(figsize=(14, 8))
     plot_drug_gene_heatmap(candidates_df, top_n=min(20, len(candidates_df)), ax=plt.gca())
@@ -593,6 +581,7 @@ def main():
     print("  08_drug_gene_network.png - Drug-gene network diagram", file=sys.stderr)
     print("  09_drug_gene_heatmap.png - Drug-gene interaction heatmap", file=sys.stderr)
 
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

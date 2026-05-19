@@ -129,11 +129,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_full_pseudobulk() -> tuple[pd.DataFrame, dict[str, list[str]]]:
-    """Load the full-gene pseudobulk CSV and return (expr_df, condition_to_cols).
-
-    expr_df: genes × pseudobulk_ids (float64, NaN for missing)
-    condition_to_cols: {condition_name: [pseudobulk_id, ...]}
-    """
+    #load full-gene pseudobulk csv; returns genes x profiles df and condition->cols map
     expr = pd.read_csv(FULL_PSEUDOBULK_CSV, index_col=0)  # genes × profiles
     meta = pd.read_csv(FULL_PSEUDOBULK_META)
 
@@ -160,12 +156,10 @@ def run_one_contrast_from_csv(
     min_abs_log2fc: float,
     min_detected: int = 10,
 ) -> tuple[pd.DataFrame, dict[str, object], Path]:
-    """Same logic as run_one_contrast but operates on slices of the full CSV."""
     case_x = expr_df[case_cols].T.to_numpy(dtype=np.float64)  # profiles × genes
     ctrl_x = expr_df[ctrl_cols].T.to_numpy(dtype=np.float64)
 
-    # Require at least min_detected non-NaN profiles per group to avoid
-    # spurious significance from sparsely detected genes.
+    #filter genes with fewer than min_detected non-nan profiles per group
     case_detected = np.sum(~np.isnan(case_x), axis=0) >= min_detected
     ctrl_detected = np.sum(~np.isnan(ctrl_x), axis=0) >= min_detected
     keep = case_detected & ctrl_detected
@@ -341,55 +335,38 @@ def run_one_contrast(
     fdr_threshold: float,
     min_abs_log2fc: float,
 ) -> tuple[pd.DataFrame, dict[str, object], Path]:
-    # 1) Read expression data for control and case groups.
+    #load expression data for case and control
     case_ad = ad.read_h5ad(case_file)
     ctrl_ad = ad.read_h5ad(control_file)
 
-    # 2) Align genes so every test uses exactly the same gene set.
+    #align to shared gene set
     case_genes = case_ad.var_names.astype(str)
     ctrl_genes = ctrl_ad.var_names.astype(str)
     shared = pd.Index(case_genes).intersection(pd.Index(ctrl_genes))
     if shared.size < 2:
-        raise ValueError(
-            f"{case_name}.vs.{control_name}: fewer than 2 shared genes"
-        )
+        raise ValueError(f"{case_name}.vs.{control_name}: fewer than 2 shared genes")
 
     case_idx = pd.Index(case_genes).get_indexer(shared)
     ctrl_idx = pd.Index(ctrl_genes).get_indexer(shared)
 
-    # 3) Build dense matrices (profiles x genes) for row-wise statistics.
+    #build dense profiles x genes matrices
     case_x = to_dense_2d(case_ad.X)[:, case_idx].astype(np.float64)
     ctrl_x = to_dense_2d(ctrl_ad.X)[:, ctrl_idx].astype(np.float64)
 
-    # 4) Calculate mean expression and lnFC.
-    # Data are log1p-transformed (natural log), so the mean difference is
-    # lnFC = ln(mean_case_CPM) - ln(mean_ctrl_CPM).
-    # True log2FC = lnFC / ln(2); the column is stored as lnFC.
+    #compute mean expression and lnFC (natural log; column stored as lnFC)
     mean_case = np.nanmean(case_x, axis=0)
     mean_ctrl = np.nanmean(ctrl_x, axis=0)
-    log2fc = mean_case - mean_ctrl  # value is lnFC; variable name kept for readability
+    log2fc = mean_case - mean_ctrl  # lnFC; variable name kept for readability
 
-    # 5) Perform independent t-tests for each gene.
-    ttest_res = ttest_ind(
-        case_x,
-        ctrl_x,
-        axis=0,
-        equal_var=bool(equal_var),
-        nan_policy=nan_policy,
-    )
-    t_stat = np.asarray(
-        getattr(ttest_res, "statistic", ttest_res[0]),
-        dtype=np.float64,
-    )
-    p_vals = np.asarray(
-        getattr(ttest_res, "pvalue", ttest_res[1]),
-        dtype=np.float64,
-    )
+    #run per-gene welch t-test
+    ttest_res = ttest_ind(case_x, ctrl_x, axis=0, equal_var=bool(equal_var), nan_policy=nan_policy)
+    t_stat = np.asarray(getattr(ttest_res, "statistic", ttest_res[0]), dtype=np.float64)
+    p_vals = np.asarray(getattr(ttest_res, "pvalue", ttest_res[1]), dtype=np.float64)
 
-    # 6) Adjust raw p-values with Benjamini-Hochberg FDR.
+    #apply benjamini-hochberg fdr correction
     padj = bh_fdr(p_vals)
 
-    # 7) Assemble per-gene DEG table with statistics and thresholds.
+    #assemble per-gene deg table
     res = pd.DataFrame(
         {
             "gene": shared.astype(str),
@@ -414,7 +391,7 @@ def run_one_contrast(
     )
     res = res.sort_values("lnFC", ascending=False).reset_index(drop=True)
 
-    # 8) Write main contrast-level DEG stats table.
+    #write deg stats table and up/down gene lists
     contrast_name = f"{case_name}.vs.{control_name}"
     out_dir = out_root / contrast_name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -422,7 +399,6 @@ def run_one_contrast(
     stats_file = out_dir / f"{contrast_name}_deg_stats.csv"
     res.to_csv(stats_file, index=False)
 
-    # 9) Split significant DEGs into up/down lists for annotation tools.
     up = res[(res["is_deg"]) & (res["lnFC"] >= 0.0)]["gene"].tolist()
     down = res[(res["is_deg"]) & (res["lnFC"] < 0.0)]["gene"].tolist()
 
@@ -435,7 +411,7 @@ def run_one_contrast(
         encoding="utf-8",
     )
 
-    # 10) Save compact run summary for quick QC and reporting.
+    #save compact run summary json
     summary = {
         "contrast": contrast_name,
         "case": case_name,
@@ -462,14 +438,14 @@ def build_condition_allowlists(
     contrast_names: list[str],
     out_root: Path,
 ) -> None:
-    # Build condition-wise allowlists from all contrast DEG calls.
+    #build condition-wise allowlists from all contrast deg calls
     cond_dir = out_root / "per_condition"
     cond_dir.mkdir(parents=True, exist_ok=True)
 
     by_condition: dict[str, list[pd.DataFrame]] = {}
 
     for df, cname in zip(contrast_results, contrast_names):
-        # Reuse the same DEG table for both case and control condition bins.
+        #add deg table to both case and control condition bins
         case, control = cname.split(".vs.", 1)
         deg_df = df[df["is_deg"]].copy()
         if deg_df.empty:
@@ -480,7 +456,7 @@ def build_condition_allowlists(
 
     summary_rows: list[dict[str, object]] = []
     for condition, frames in sorted(by_condition.items()):
-        # Collapse repeated hits across contrasts into one allowlist row/gene.
+        #collapse repeated hits across contrasts into one allowlist row per gene
         merged = pd.concat(frames, axis=0, ignore_index=True)
         merged["abs_lnFC"] = np.abs(merged["lnFC"].to_numpy())
         agg = (
@@ -511,10 +487,10 @@ def build_condition_allowlists(
     summary_df.to_csv(out_root / "de_gene_filter_summary.csv", index=False)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
 
-    # 1) Resolve I/O roots.
+    #resolve output paths
     out_root = resolve_base(args.output_dir)
     allowlist_root = resolve_base(args.allowlist_dir)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -526,9 +502,7 @@ def main() -> None:
     warehouse_rows: list[WarehouseRecord] = []
 
     if args.use_full_pseudobulk:
-        # ------------------------------------------------------------------ #
-        # Full-pseudobulk path: all genes, no HVG filter
-        # ------------------------------------------------------------------ #
+        #full-pseudobulk path: all genes, no hvg filter
         print(f"[mode] full pseudobulk CSV  →  {FULL_PSEUDOBULK_CSV.name}")
         expr_df, cond_to_cols = load_full_pseudobulk()
         all_conditions = sorted(cond_to_cols.keys())
@@ -540,18 +514,13 @@ def main() -> None:
             include_brca1_pair=args.include_brca1_pair,
         )
 
+        #run deg stats per contrast from full csv
         for case, control in contrasts:
             res, summary, stats_file = run_one_contrast_from_csv(
-                case_name=case,
-                control_name=control,
-                expr_df=expr_df,
-                case_cols=cond_to_cols[case],
-                ctrl_cols=cond_to_cols[control],
-                out_root=out_root,
-                equal_var=args.equal_var,
-                nan_policy=args.nan_policy,
-                fdr_threshold=float(args.fdr_threshold),
-                min_abs_log2fc=float(args.min_abs_log2fc),
+                case_name=case, control_name=control, expr_df=expr_df,
+                case_cols=cond_to_cols[case], ctrl_cols=cond_to_cols[control],
+                out_root=out_root, equal_var=args.equal_var, nan_policy=args.nan_policy,
+                fdr_threshold=float(args.fdr_threshold), min_abs_log2fc=float(args.min_abs_log2fc),
                 min_detected=int(args.min_detected),
             )
             contrast_rows.append(summary)
@@ -564,7 +533,7 @@ def main() -> None:
                 date_utc=utc_now_iso(),
                 params_hash=params_hash(vars(args)),
                 condition=f"{case}.vs.{control}",
-                stage="07b_deg_ttest_full",
+                stage="deg_ttest_full",
             ))
             print(
                 f"[{case}.vs.{control}] n_genes_tested={summary['n_genes_tested']} "
@@ -573,15 +542,11 @@ def main() -> None:
             )
 
     else:
-        # ------------------------------------------------------------------ #
-        # Original path: per-condition HVG-filtered h5ads
-        # ------------------------------------------------------------------ #
+        #per-condition path: hvg-filtered h5ads from pre-correlation stage
         in_root = resolve_base(args.input_dir)
         files = list_condition_files(in_root)
         if not files:
-            raise FileNotFoundError(
-                f"No *_pseudobulk_logcpm.h5ad files found in {in_root}"
-            )
+            raise FileNotFoundError(f"No *_pseudobulk_logcpm.h5ad files found in {in_root}")
 
         file_by_condition = {condition_name_from_file(f): f for f in files}
         all_conditions = sorted(file_by_condition.keys())
@@ -593,55 +558,36 @@ def main() -> None:
             include_brca1_pair=args.include_brca1_pair,
         )
 
-        # 3) Run DEG stats per contrast.
+        #run deg stats per contrast from h5ads
         for case, control in contrasts:
             case_file = file_by_condition[case]
             control_file = file_by_condition[control]
 
             res, summary, stats_file = run_one_contrast(
-                case_name=case,
-                control_name=control,
-                case_file=case_file,
-                control_file=control_file,
-                out_root=out_root,
-                equal_var=args.equal_var,
-                nan_policy=args.nan_policy,
-                fdr_threshold=float(args.fdr_threshold),
+                case_name=case, control_name=control, case_file=case_file,
+                control_file=control_file, out_root=out_root, equal_var=args.equal_var,
+                nan_policy=args.nan_policy, fdr_threshold=float(args.fdr_threshold),
                 min_abs_log2fc=float(args.min_abs_log2fc),
             )
-
             contrast_rows.append(summary)
             contrast_results.append(res)
             contrast_names.append(str(summary["contrast"]))
+            warehouse_rows.append(WarehouseRecord(
+                input_file=f"{case_file};{control_file}",
+                output_file=str(stats_file),
+                script=str(Path(__file__).resolve().relative_to(REPO_ROOT)),
+                date_utc=utc_now_iso(),
+                params_hash=params_hash(vars(args)),
+                condition=f"{case}.vs.{control}",
+                stage="deg_ttest",
+            ))
+            print(f"[{case}.vs.{control}] shared_genes={summary['n_shared_genes']} deg={summary['n_deg_total']}")
 
-            warehouse_rows.append(
-                WarehouseRecord(
-                    input_file=f"{case_file};{control_file}",
-                    output_file=str(stats_file),
-                    script=str(Path(__file__).resolve().relative_to(REPO_ROOT)),
-                    date_utc=utc_now_iso(),
-                    params_hash=params_hash(vars(args)),
-                    condition=f"{case}.vs.{control}",
-                    stage="07b_deg_ttest",
-                )
-            )
+    #write global contrast summary and per-condition allowlists
+    pd.DataFrame(contrast_rows).to_csv(out_root / "deg_contrast_summary.csv", index=False)
+    build_condition_allowlists(contrast_results=contrast_results, contrast_names=contrast_names, out_root=allowlist_root)
 
-            print(
-                f"[{case}.vs.{control}] shared_genes={summary['n_shared_genes']} "
-                f"deg={summary['n_deg_total']}"
-            )
-
-    # 4) Write global summary and condition-level allowlists.
-    contrast_summary = pd.DataFrame(contrast_rows)
-    contrast_summary.to_csv(out_root / "deg_contrast_summary.csv", index=False)
-
-    build_condition_allowlists(
-        contrast_results=contrast_results,
-        contrast_names=contrast_names,
-        out_root=allowlist_root,
-    )
-
-    # 5) Save run config and provenance.
+    #save run config json and warehouse provenance
     config = {
         "fdr_threshold": float(args.fdr_threshold),
         "min_abs_log2fc": float(args.min_abs_log2fc),
@@ -652,15 +598,13 @@ def main() -> None:
         "contrasts": [f"{case}:{control}" for case, control in contrasts],
         "summary_file": str(allowlist_root / "de_gene_filter_summary.csv"),
     }
-    (allowlist_root / "de_gene_filter_config.json").write_text(
-        json.dumps(config, indent=2),
-        encoding="utf-8",
-    )
-
+    (allowlist_root / "de_gene_filter_config.json").write_text(json.dumps(config, indent=2), encoding="utf-8")
     append_warehouse(out_root, warehouse_rows)
+
     print(f"Done. DEG outputs: {out_root}")
     print(f"Done. DE allowlists: {allowlist_root / 'per_condition'}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

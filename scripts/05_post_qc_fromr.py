@@ -16,7 +16,7 @@ import scanpy as sc
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run post-filter QC")
-    parser.add_argument("--cohort", default="results/bigboss_chopped.csv")
+    parser.add_argument("--cohort", default="results/00_data_ingestion/bigboss_chopped.csv")
     parser.add_argument(
         "--filtered-dir",
         default="results/02_preprocess/01_filtered",
@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    #add repo root to sys.path so utils packages resolve correctly
     repo_root = Path(__file__).resolve().parents[1]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -57,6 +59,7 @@ def main() -> int:
         extract_per_cell_qc,
     )
 
+    #resolve paths and create output dir
     cohort_path = (repo_root / args.cohort).resolve()
     filtered_dir = (repo_root / args.filtered_dir).resolve()
     pre_summary_path = (repo_root / args.pre_summary).resolve()
@@ -64,6 +67,7 @@ def main() -> int:
     out_dir = (repo_root / args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #load and subset cohort
     if not cohort_path.exists():
         print(f"ERROR: cohort file not found: {cohort_path}")
         return 1
@@ -79,6 +83,7 @@ def main() -> int:
     summary_rows: list[dict] = []
     per_cell_parts: list[pd.DataFrame] = []
 
+    #compute post-filter qc metrics from each filtered h5ad
     total = len(cohort)
     for pos, row in enumerate(cohort.itertuples(index=False), start=1):
         sample_name = str(row.SampleName)
@@ -116,25 +121,20 @@ def main() -> int:
         print("ERROR: no filtered samples were processed")
         return 1
 
+    #concatenate results across samples
     post_summary = pd.DataFrame(summary_rows)
     post_per_cell = pd.concat(per_cell_parts, ignore_index=True)
 
+    #save post-qc summary csv and plots
     post_summary_file = out_dir / "post_qc_summary.csv"
     post_summary.to_csv(post_summary_file, index=False)
     per_cell_file = save_per_cell_table(post_per_cell, out_dir, "post_qc")
     post_boxplot_file = out_dir / "post_qc_boxplots.png"
     post_violin_file = out_dir / "post_qc_violins.png"
-    plot_sample_boxpanels(
-        post_per_cell,
-        post_boxplot_file,
-        title_suffix="post",
-    )
-    plot_sample_violinpanels(
-        post_per_cell,
-        post_violin_file,
-        title_suffix="post",
-    )
+    plot_sample_boxpanels(post_per_cell, post_boxplot_file, title_suffix="post")
+    plot_sample_violinpanels(post_per_cell, post_violin_file, title_suffix="post")
 
+    #optional pre/post comparison if pre-summary is available
     compare_file = None
     compare_plot = None
     compare_violin = None
@@ -158,27 +158,17 @@ def main() -> int:
                 compare_df["pct_mito_median_post"]
                 - compare_df["pct_mito_median_pre"]
             )
-
             compare_file = out_dir / "pre_post_qc_comparison.csv"
             compare_df.to_csv(compare_file, index=False)
             compare_plot = out_dir / "pre_post_qc_scatter.png"
             plot_pre_post_scatter(compare_df, compare_plot)
 
+    #optional per-cell violin overlay if pre per-cell table is available
     pre_per_cell = load_per_cell_table(pre_per_cell_path)
     if pre_per_cell is not None and not pre_per_cell.empty:
-        pre_cols = {
-            "SampleName",
-            "Condition",
-            "stage",
-            "n_counts",
-            "n_genes",
-            "pct_mito",
-        }
+        pre_cols = {"SampleName", "Condition", "stage", "n_counts", "n_genes", "pct_mito"}
         if pre_cols.issubset(set(pre_per_cell.columns)):
-            merged_per_cell = pd.concat(
-                [pre_per_cell, post_per_cell],
-                ignore_index=True,
-            )
+            merged_per_cell = pd.concat([pre_per_cell, post_per_cell], ignore_index=True)
             compare_violin = out_dir / "pre_post_qc_violins.png"
             plot_pre_post_violinpanels(merged_per_cell, compare_violin)
 

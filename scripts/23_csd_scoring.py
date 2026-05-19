@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # flake8: noqa: E501
-"""Stage-09 union-capable upstream builder.
+"""Build per-condition-pair CSD scoring artifacts for network construction.
 
-Per condition-pair, this script creates the artifacts used by both
-branch A (scale-free) and branch B (permutation thresholding):
+Outputs per pair:
 - DEG lists (up/down)
 - per-gene DEG annotation table
-- raw C/S/D table with denominator fixed to one
-
-This variant supports either shared-gene or union-gene universes.
+- raw C/S/D AllValues table
+Supports shared-gene or union-gene universes.
 """
 
 from __future__ import annotations
@@ -41,11 +39,7 @@ def align_corrs_union(
     genes_ctrl: np.ndarray,
     fill_missing: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Align case/control correlation matrices on the ordered union of genes.
-
-    Any correlation involving a gene missing from one condition is filled with
-    `fill_missing` (default 0.0), enabling downstream S-type detection.
-    """
+    #align case/ctrl matrices on gene union; missing correlations filled with fill_missing
     case_list = [str(g) for g in genes_case]
     union_list = case_list + [str(g) for g in genes_ctrl if str(g) not in set(case_list)]
     genes_union = np.asarray(union_list, dtype=str)
@@ -73,7 +67,7 @@ def align_corrs_union(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build stage-09 shared upstream artifacts")
+    parser = argparse.ArgumentParser(description="Build per-pair CSD scoring artifacts")
     parser.add_argument(
         "--corr-dir",
         default="results/09_correlation/pearson",
@@ -149,35 +143,31 @@ def run_pair(
     pair_out = out_root / pair_name
     pair_out.mkdir(parents=True, exist_ok=True)
 
+    #load correlation matrices for case and control
     corr_case_raw, genes_case, case_corr_file = load_corr_payload(corr_root, case)
     corr_ctrl_raw, genes_ctrl, ctrl_corr_file = load_corr_payload(corr_root, ctrl)
 
     shared_set = set(str(g) for g in genes_case).intersection(set(str(g) for g in genes_ctrl))
     n_genes_shared = len(shared_set)
 
+    #align matrices on shared or union gene universe
     if gene_universe == "shared":
         corr_case, corr_ctrl, genes_universe = align_corrs(corr_case_raw, genes_case, corr_ctrl_raw, genes_ctrl)
     else:
         corr_case, corr_ctrl, genes_universe = align_corrs_union(
-            corr_case=corr_case_raw,
-            genes_case=genes_case,
-            corr_ctrl=corr_ctrl_raw,
-            genes_ctrl=genes_ctrl,
+            corr_case=corr_case_raw, genes_case=genes_case,
+            corr_ctrl=corr_ctrl_raw, genes_ctrl=genes_ctrl,
             fill_missing=float(fill_missing_corr),
         )
 
+    #tag each gene as shared, case_only, or ctrl_only
     case_set = {str(g) for g in genes_case}
     ctrl_set_local = {str(g) for g in genes_ctrl}
     presence_rows = []
     for g in genes_universe:
         in_case = g in case_set
         in_ctrl = g in ctrl_set_local
-        if in_case and in_ctrl:
-            presence = "shared"
-        elif in_case:
-            presence = "case_only"
-        else:
-            presence = "ctrl_only"
+        presence = "shared" if (in_case and in_ctrl) else ("case_only" if in_case else "ctrl_only")
         presence_rows.append({"gene": g, "presence": presence})
     gene_presence_df = pd.DataFrame(presence_rows)
     gene_presence_df.to_csv(pair_out / f"{pair_name}_gene_presence.csv", index=False)
@@ -185,12 +175,13 @@ def run_pair(
     n_case_profiles = load_n_profiles(expr_root, case)
     n_ctrl_profiles = load_n_profiles(expr_root, ctrl)
 
+    #load deg stats and write up/down gene lists
     deg_df = load_deg_stats(deg_root, case, ctrl)
     deg_all, up_degs, down_degs = pick_degs(deg_df, fdr_threshold=fdr_threshold, min_abs_log2fc=min_abs_log2fc)
-
     (pair_out / "up_degs.txt").write_text("\n".join(up_degs) + ("\n" if up_degs else ""), encoding="utf-8")
     (pair_out / "down_degs.txt").write_text("\n".join(down_degs) + ("\n" if down_degs else ""), encoding="utf-8")
 
+    #select genes to use: degs only or full universe
     if use_degs:
         genes_keep = np.array([g for g in genes_universe if g in deg_all], dtype=str)
         if genes_keep.size < 3:
@@ -199,25 +190,20 @@ def run_pair(
     else:
         genes_keep = genes_universe.copy()
 
-    gene_change_df = build_gene_change_table(
-        deg_df=deg_df,
-        genes_keep=genes_keep,
-        fdr_threshold=fdr_threshold,
-        min_abs_log2fc=min_abs_log2fc,
-    )
+    #build per-gene expression change table and subset correlation matrices
+    gene_change_df = build_gene_change_table(deg_df=deg_df, genes_keep=genes_keep,
+                                              fdr_threshold=fdr_threshold, min_abs_log2fc=min_abs_log2fc)
     gene_change_file = pair_out / f"{pair_name}_gene_expression_change.csv"
     gene_change_df.to_csv(gene_change_file, index=False)
-
     (pair_out / f"{pair_name}_genes_keep.txt").write_text(
-        "\n".join(genes_keep.tolist()) + ("\n" if genes_keep.size > 0 else ""),
-        encoding="utf-8",
-    )
+        "\n".join(genes_keep.tolist()) + ("\n" if genes_keep.size > 0 else ""), encoding="utf-8")
 
     idx_map = {g: i for i, g in enumerate(genes_universe)}
     ig = np.array([idx_map[g] for g in genes_keep], dtype=int)
     r_case = corr_case[np.ix_(ig, ig)]
     r_ctrl = corr_ctrl[np.ix_(ig, ig)]
 
+    #compute raw csd allvalues table
     all_values = compute_allvalues(r_case, r_ctrl, genes_keep)
     all_values_file = pair_out / f"{pair_name}_AllValues.tsv"
     all_values.to_csv(all_values_file, sep="\t", index=False)
@@ -255,38 +241,36 @@ def run_pair(
     return summary
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and list available conditions
     corr_root = resolve_base(args.corr_dir)
     expr_root = resolve_base(args.expr_dir)
     deg_root = resolve_base(args.deg_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #parse condition pairs to process
     conditions = list_conditions(corr_root)
     pairs = parse_pairs(args.pair, conditions)
 
+    #run csd scoring for each pair
     summaries: list[dict[str, object]] = []
     for case, ctrl in pairs:
-        summaries.append(
-            run_pair(
-                case=case,
-                ctrl=ctrl,
-                corr_root=corr_root,
-                expr_root=expr_root,
-                deg_root=deg_root,
-                out_root=out_root,
-                fdr_threshold=float(args.fdr_threshold),
-                min_abs_log2fc=float(args.min_abs_log2fc),
-                use_degs=bool(args.use_degs),
-                gene_universe=str(args.gene_universe),
-                fill_missing_corr=float(args.fill_missing_corr),
-            )
-        )
+        summaries.append(run_pair(
+            case=case, ctrl=ctrl, corr_root=corr_root, expr_root=expr_root,
+            deg_root=deg_root, out_root=out_root,
+            fdr_threshold=float(args.fdr_threshold), min_abs_log2fc=float(args.min_abs_log2fc),
+            use_degs=bool(args.use_degs), gene_universe=str(args.gene_universe),
+            fill_missing_corr=float(args.fill_missing_corr),
+        ))
 
+    #write combined summary csv
     pd.DataFrame(summaries).sort_values("pair").to_csv(out_root / "shared_upstream_summary.csv", index=False)
-    print(f"Done. Stage-09 shared upstream outputs: {out_root}")
+    print(f"Done. CSD scoring outputs: {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

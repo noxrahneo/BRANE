@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-import sys
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -16,7 +15,6 @@ import pandas as pd
 import scanpy as sc
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "scripts" / "analysis"))
 
 from utils.annotation_signature_utils import build_signatures  # noqa: E402
 from utils.h5ad_compat import read_h5ad_compat  # noqa: E402
@@ -805,7 +803,9 @@ def make_umap_plot(
         legend_fontsize=legend_fontsize,
     )
     if color in {"cell_type_annot", "SampleName"} and color in adata.obs.columns:
-        categories = [str(v) for v in adata.obs[color].astype("category").cat.categories]
+        categories = [
+            str(v) for v in adata.obs[color].astype("category").cat.categories
+        ]
         palette = adata.uns.get(f"{color}_colors", [])
         handles = []
         for idx, label in enumerate(categories):
@@ -859,7 +859,9 @@ def make_tsne_plot(
         legend_fontsize=legend_fontsize,
     )
     if color in {"cell_type_annot", "SampleName"} and color in adata.obs.columns:
-        categories = [str(v) for v in adata.obs[color].astype("category").cat.categories]
+        categories = [
+            str(v) for v in adata.obs[color].astype("category").cat.categories
+        ]
         palette = adata.uns.get(f"{color}_colors", [])
         handles = []
         for idx, label in enumerate(categories):
@@ -916,6 +918,7 @@ def annotate_one_condition(
     sig_path: Path,
     condition: str,
 ) -> dict[str, object]:
+    #load integrated h5ad and create output dirs
     h5ad = integrated_file_for(in_root / condition)
     out_dir = out_root / condition
     fig_dir = out_dir / "figures"
@@ -926,12 +929,11 @@ def annotate_one_condition(
     ensure_annotation_inputs(adata, args.cluster_col)
     maybe_compute_tsne(adata, args)
 
+    #run wilcoxon de markers per cluster
     marker_df = run_markers(adata, args.cluster_col, args.n_top_markers)
-    marker_df.to_csv(
-        out_dir / f"{condition}_cluster_markers_top.csv",
-        index=False,
-    )
+    marker_df.to_csv(out_dir / f"{condition}_cluster_markers_top.csv", index=False)
 
+    #build internal cell-type signatures from file sources
     signatures = build_signatures(
         sig_path=sig_path,
         lineage_rdata_path=resolve_base(args.lineage_rdata),
@@ -943,267 +945,106 @@ def annotate_one_condition(
     )
     internal_gene_to_labels = invert_signatures(signatures)
 
-    external_marker_paths = [
-        resolve_base(path_like)
-        for path_like in args.external_marker_files
-    ]
-    (
-        external_gene_to_celltypes,
-        external_audit_df,
-    ) = load_external_marker_mappings(
+    #load optional external marker databases
+    external_marker_paths = [resolve_base(p) for p in args.external_marker_files]
+    external_gene_to_celltypes, external_audit_df = load_external_marker_mappings(
         marker_files=external_marker_paths,
         tissue_hint=args.external_marker_tissue_hint,
         min_score=float(args.external_marker_min_score),
     )
     if not external_audit_df.empty:
-        external_audit_df.to_csv(
-            out_dir / f"{condition}_external_marker_import_audit.csv",
-            index=False,
-        )
+        external_audit_df.to_csv(out_dir / f"{condition}_external_marker_import_audit.csv", index=False)
 
+    #build gene source provenance table
     provenance_df = build_gene_source_provenance(
         marker_df=marker_df,
         internal_gene_to_labels=internal_gene_to_labels,
         external_gene_to_celltypes=external_gene_to_celltypes,
     )
-    provenance_df.to_csv(
-        out_dir / f"{condition}_marker_gene_source_provenance.csv",
-        index=False,
-    )
+    provenance_df.to_csv(out_dir / f"{condition}_marker_gene_source_provenance.csv", index=False)
 
-    score_cols, genes_used = score_signatures(
-        adata,
-        signatures,
-        args.score_layer,
-    )
+    #score each signature per cell and aggregate to cluster means
+    score_cols, genes_used = score_signatures(adata, signatures, args.score_layer)
     score_table = cluster_signature_table(adata, args.cluster_col, score_cols)
-    score_table.to_csv(
-        out_dir / f"{condition}_cluster_signature_scores.csv", index=False
-    )
+    score_table.to_csv(out_dir / f"{condition}_cluster_signature_scores.csv", index=False)
 
+    #infer primary cell-type label per cluster from top signature score
     mapping_df = infer_cluster_labels(score_table, args.cluster_col)
     if mapping_df.empty:
         raise ValueError("No signature scores were computed for annotation.")
 
-    sanity_df = marker_sanity(
-        mapping_df,
-        marker_df,
-        signatures,
-        args.cluster_col,
-    )
-    mapping_df = mapping_df.merge(
-        sanity_df,
-        on=[args.cluster_col, "predicted_cell_type"],
-        how="left",
-    )
+    #validate labels with marker overlap sanity check
+    sanity_df = marker_sanity(mapping_df, marker_df, signatures, args.cluster_col)
+    mapping_df = mapping_df.merge(sanity_df, on=[args.cluster_col, "predicted_cell_type"], how="left")
 
+    #merge external cluster label predictions
     external_cluster_df = infer_external_cluster_labels(
         marker_df=marker_df,
         cluster_col=args.cluster_col,
         external_gene_to_celltypes=external_gene_to_celltypes,
     )
-    mapping_df = mapping_df.merge(
-        external_cluster_df,
-        on=[args.cluster_col],
-        how="left",
-    )
-    mapping_df["external_marker_overlap_n"] = (
-        mapping_df["external_marker_overlap_n"].fillna(0).astype(int)
-    )
-    mapping_df["external_predicted_cell_type"] = (
-        mapping_df["external_predicted_cell_type"].fillna("").astype(str)
-    )
+    mapping_df = mapping_df.merge(external_cluster_df, on=[args.cluster_col], how="left")
+    mapping_df["external_marker_overlap_n"] = mapping_df["external_marker_overlap_n"].fillna(0).astype(int)
+    mapping_df["external_predicted_cell_type"] = mapping_df["external_predicted_cell_type"].fillna("").astype(str)
     mapping_df["external_label_used"] = False
 
-    low_margin = (
-        mapping_df["score_margin"].fillna(-np.inf)
-        < float(args.uncertain_margin_threshold)
-    )
-    low_overlap = (
-        mapping_df["marker_overlap_n"].fillna(0).astype(int)
-        < int(args.uncertain_min_overlap)
-    )
-    external_good = (
-        mapping_df["external_marker_overlap_n"]
-        >= int(args.external_min_overlap)
-    )
+    #fall back to external label for clusters with low margin or low marker overlap
+    low_margin = mapping_df["score_margin"].fillna(-np.inf) < float(args.uncertain_margin_threshold)
+    low_overlap = mapping_df["marker_overlap_n"].fillna(0).astype(int) < int(args.uncertain_min_overlap)
+    external_good = mapping_df["external_marker_overlap_n"] >= int(args.external_min_overlap)
     has_external = mapping_df["external_predicted_cell_type"].str.len() > 0
     use_external = (low_margin | low_overlap) & external_good & has_external
 
-    mapping_df.loc[use_external, "predicted_cell_type"] = mapping_df.loc[
-        use_external,
-        "external_predicted_cell_type",
-    ]
+    mapping_df.loc[use_external, "predicted_cell_type"] = mapping_df.loc[use_external, "external_predicted_cell_type"]
     mapping_df.loc[use_external, "external_label_used"] = True
-    mapping_df = apply_coarse_compartment(
-        mapping_df,
-        margin_threshold=args.uncertain_margin_threshold,
-        min_overlap=args.uncertain_min_overlap,
-    )
+
+    #apply coarse compartment and epithelial lineage refinement
+    mapping_df = apply_coarse_compartment(mapping_df, margin_threshold=args.uncertain_margin_threshold, min_overlap=args.uncertain_min_overlap)
     mapping_df = refine_epithelial_lineage(mapping_df)
-    mapping_df.to_csv(
-        out_dir / f"{condition}_cluster_to_celltype_mapping.csv", index=False
-    )
 
-    mapping_df[
-        [
-            args.cluster_col,
-            "predicted_cell_type",
-            "major_compartment",
-            "coarse_uncertain_reason",
-            "score_margin",
-            "marker_overlap_n",
-        ]
-    ].to_csv(
-        out_dir / f"{condition}_cluster_to_major_compartment_mapping.csv",
-        index=False,
-    )
+    #save mapping tables
+    mapping_df.to_csv(out_dir / f"{condition}_cluster_to_celltype_mapping.csv", index=False)
+    mapping_df[[args.cluster_col, "predicted_cell_type", "major_compartment", "coarse_uncertain_reason", "score_margin", "marker_overlap_n"]].to_csv(
+        out_dir / f"{condition}_cluster_to_major_compartment_mapping.csv", index=False)
+    mapping_df[[args.cluster_col, "major_compartment", "epithelial_lineage", "coarse_uncertain_reason", "score_margin", "marker_overlap_n"]].to_csv(
+        out_dir / f"{condition}_cluster_to_epithelial_lineage_mapping.csv", index=False)
 
-    mapping_df[
-        [
-            args.cluster_col,
-            "major_compartment",
-            "epithelial_lineage",
-            "coarse_uncertain_reason",
-            "score_margin",
-            "marker_overlap_n",
-        ]
-    ].to_csv(
-        out_dir / f"{condition}_cluster_to_epithelial_lineage_mapping.csv",
-        index=False,
-    )
+    #transfer cluster-level labels back to cell obs
+    cluster_to_label = dict(zip(mapping_df[args.cluster_col].astype(str), mapping_df["predicted_cell_type"]))
+    adata.obs["cell_type_annot"] = adata.obs[args.cluster_col].astype(str).map(cluster_to_label).fillna("Unknown")
 
-    cluster_to_label = dict(
-        zip(
-            mapping_df[args.cluster_col].astype(str),
-            mapping_df["predicted_cell_type"],
-        )
-    )
-    adata.obs["cell_type_annot"] = (
-        adata.obs[args.cluster_col]
-        .astype(str)
-        .map(cluster_to_label)
-        .fillna("Unknown")
-    )
+    cluster_to_major = dict(zip(mapping_df[args.cluster_col].astype(str), mapping_df["major_compartment"]))
+    adata.obs["major_compartment"] = adata.obs[args.cluster_col].astype(str).map(cluster_to_major).fillna("Uncertain")
 
-    cluster_to_major = dict(
-        zip(
-            mapping_df[args.cluster_col].astype(str),
-            mapping_df["major_compartment"],
-        )
-    )
-    adata.obs["major_compartment"] = (
-        adata.obs[args.cluster_col]
-        .astype(str)
-        .map(cluster_to_major)
-        .fillna("Uncertain")
-    )
+    cluster_to_lineage = dict(zip(mapping_df[args.cluster_col].astype(str), mapping_df["epithelial_lineage"]))
+    adata.obs["epithelial_lineage"] = adata.obs[args.cluster_col].astype(str).map(cluster_to_lineage).fillna("Uncertain")
 
-    cluster_to_lineage = dict(
-        zip(
-            mapping_df[args.cluster_col].astype(str),
-            mapping_df["epithelial_lineage"],
-        )
-    )
-    adata.obs["epithelial_lineage"] = (
-        adata.obs[args.cluster_col]
-        .astype(str)
-        .map(cluster_to_lineage)
-        .fillna("Uncertain")
-    )
+    #save signature gene coverage csv
+    pd.DataFrame({"signature": list(genes_used.keys()), "genes_present_n": list(genes_used.values())}).sort_values(
+        ["genes_present_n", "signature"], ascending=[False, True]).to_csv(out_dir / f"{condition}_signature_gene_coverage.csv", index=False)
 
-    pd.DataFrame(
-        {
-            "signature": list(genes_used.keys()),
-            "genes_present_n": list(genes_used.values()),
-        }
-    ).sort_values(
-        ["genes_present_n", "signature"],
-        ascending=[False, True],
-    ).to_csv(out_dir / f"{condition}_signature_gene_coverage.csv", index=False)
-
+    #generate umap plots coloured by annotation layers
     title_prefix = args.title_prefix.strip() or condition
-    make_umap_plot(
-        adata,
-        color="cell_type_annot",
-        title=f"{title_prefix} | UMAP: cell_type_annot",
-        out_file=fig_dir / f"{condition}_umap_cell_type_annot.png",
-        dpi=args.dpi,
-    )
-    make_umap_plot(
-        adata,
-        color="major_compartment",
-        title=f"{title_prefix} | UMAP: major_compartment",
-        out_file=fig_dir / f"{condition}_umap_major_compartment.png",
-        dpi=args.dpi,
-    )
-    make_umap_plot(
-        adata,
-        color="epithelial_lineage",
-        title=f"{title_prefix} | UMAP: epithelial_lineage",
-        out_file=fig_dir / f"{condition}_umap_epithelial_lineage.png",
-        dpi=args.dpi,
-    )
-    make_umap_plot(
-        adata,
-        color=args.cluster_col,
-        title=f"{title_prefix} | UMAP: {args.cluster_col}",
-        out_file=fig_dir / f"{condition}_umap_{args.cluster_col}.png",
-        dpi=args.dpi,
-    )
+    make_umap_plot(adata, color="cell_type_annot", title=f"{title_prefix} | UMAP: cell_type_annot", out_file=fig_dir / f"{condition}_umap_cell_type_annot.png", dpi=args.dpi)
+    make_umap_plot(adata, color="major_compartment", title=f"{title_prefix} | UMAP: major_compartment", out_file=fig_dir / f"{condition}_umap_major_compartment.png", dpi=args.dpi)
+    make_umap_plot(adata, color="epithelial_lineage", title=f"{title_prefix} | UMAP: epithelial_lineage", out_file=fig_dir / f"{condition}_umap_epithelial_lineage.png", dpi=args.dpi)
+    make_umap_plot(adata, color=args.cluster_col, title=f"{title_prefix} | UMAP: {args.cluster_col}", out_file=fig_dir / f"{condition}_umap_{args.cluster_col}.png", dpi=args.dpi)
     if "SampleName" in adata.obs.columns:
-        make_umap_plot(
-            adata,
-            color="SampleName",
-            title=f"{title_prefix} | UMAP: SampleName",
-            out_file=fig_dir / f"{condition}_umap_sample.png",
-            dpi=args.dpi,
-        )
+        make_umap_plot(adata, color="SampleName", title=f"{title_prefix} | UMAP: SampleName", out_file=fig_dir / f"{condition}_umap_sample.png", dpi=args.dpi)
 
+    #optional tsne plots if embedding was computed
     if args.compute_tsne and "X_tsne" in adata.obsm:
-        make_tsne_plot(
-            adata,
-            color="cell_type_annot",
-            title=f"{title_prefix} | t-SNE: cell_type_annot",
-            out_file=fig_dir / f"{condition}_tsne_cell_type_annot.png",
-            dpi=args.dpi,
-        )
-        make_tsne_plot(
-            adata,
-            color="major_compartment",
-            title=f"{title_prefix} | t-SNE: major_compartment",
-            out_file=fig_dir / f"{condition}_tsne_major_compartment.png",
-            dpi=args.dpi,
-        )
-        make_tsne_plot(
-            adata,
-            color="epithelial_lineage",
-            title=f"{title_prefix} | t-SNE: epithelial_lineage",
-            out_file=fig_dir / f"{condition}_tsne_epithelial_lineage.png",
-            dpi=args.dpi,
-        )
-        make_tsne_plot(
-            adata,
-            color=args.cluster_col,
-            title=f"{title_prefix} | t-SNE: {args.cluster_col}",
-            out_file=fig_dir / f"{condition}_tsne_{args.cluster_col}.png",
-            dpi=args.dpi,
-        )
+        make_tsne_plot(adata, color="cell_type_annot", title=f"{title_prefix} | t-SNE: cell_type_annot", out_file=fig_dir / f"{condition}_tsne_cell_type_annot.png", dpi=args.dpi)
+        make_tsne_plot(adata, color="major_compartment", title=f"{title_prefix} | t-SNE: major_compartment", out_file=fig_dir / f"{condition}_tsne_major_compartment.png", dpi=args.dpi)
+        make_tsne_plot(adata, color="epithelial_lineage", title=f"{title_prefix} | t-SNE: epithelial_lineage", out_file=fig_dir / f"{condition}_tsne_epithelial_lineage.png", dpi=args.dpi)
+        make_tsne_plot(adata, color=args.cluster_col, title=f"{title_prefix} | t-SNE: {args.cluster_col}", out_file=fig_dir / f"{condition}_tsne_{args.cluster_col}.png", dpi=args.dpi)
         if "SampleName" in adata.obs.columns:
-            make_tsne_plot(
-                adata,
-                color="SampleName",
-                title=f"{title_prefix} | t-SNE: SampleName",
-                out_file=fig_dir / f"{condition}_tsne_sample.png",
-                dpi=args.dpi,
-            )
+            make_tsne_plot(adata, color="SampleName", title=f"{title_prefix} | t-SNE: SampleName", out_file=fig_dir / f"{condition}_tsne_sample.png", dpi=args.dpi)
 
-    maybe_write_confusion(
-        adata,
-        previous_label_col=args.previous_label_col,
-        out_file=out_dir / f"{condition}_confusion_previous_vs_annot.csv",
-    )
+    #optional confusion matrix against prior label column
+    maybe_write_confusion(adata, previous_label_col=args.previous_label_col, out_file=out_dir / f"{condition}_confusion_previous_vs_annot.csv")
 
+    #fix log1p base if stored as non-float (scanpy write compatibility)
     log1p = adata.uns.get("log1p")
     if isinstance(log1p, dict) and "base" in log1p:
         try:
@@ -1211,6 +1052,7 @@ def annotate_one_condition(
         except (TypeError, ValueError):
             log1p["base"] = float(np.e)
 
+    #save annotated h5ad and per-condition summary csv
     annotated_file = out_dir / f"{condition}_annotated.h5ad"
     adata.write_h5ad(annotated_file)
 
@@ -1220,18 +1062,12 @@ def annotate_one_condition(
         "genes": int(adata.n_vars),
         "clusters": int(adata.obs[args.cluster_col].nunique()),
         "annotated_cell_types": int(adata.obs["cell_type_annot"].nunique()),
-        "major_compartments": int(
-            adata.obs["major_compartment"].nunique()
-        ),
-        "epithelial_lineages": int(
-            adata.obs["epithelial_lineage"].nunique()
-        ),
+        "major_compartments": int(adata.obs["major_compartment"].nunique()),
+        "epithelial_lineages": int(adata.obs["epithelial_lineage"].nunique()),
         "integrated_input": str(h5ad),
         "annotated_output": str(annotated_file),
     }
-    pd.DataFrame([summary_row]).to_csv(
-        out_dir / f"{condition}_annotation_summary.csv", index=False
-    )
+    pd.DataFrame([summary_row]).to_csv(out_dir / f"{condition}_annotation_summary.csv", index=False)
 
     print(f"Annotation complete: {condition}")
     print(f"Output directory: {out_dir}")
@@ -1241,10 +1077,13 @@ def annotate_one_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve paths
     in_root = resolve_base(args.input_dir)
     out_root = resolve_base(args.output_dir)
     sig_path = resolve_base(args.signature_file)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         available = list_conditions(in_root)
         if not available:
@@ -1255,6 +1094,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions and annotate each one
     conditions = resolve_conditions(in_root, args.condition)
     arg_hash = params_hash(vars(args))
     now = utc_now_iso()
@@ -1262,13 +1102,7 @@ def main() -> int:
     warehouse_rows: list[WarehouseRecord] = []
 
     for condition in conditions:
-        row = annotate_one_condition(
-            args,
-            in_root,
-            out_root,
-            sig_path,
-            condition,
-        )
+        row = annotate_one_condition(args, in_root, out_root, sig_path, condition)
         rows.append(row)
         warehouse_rows.append(
             WarehouseRecord(
@@ -1282,11 +1116,13 @@ def main() -> int:
             )
         )
 
+    #write combined summary csv when multiple conditions were processed
     if len(rows) > 1:
         summary_file = out_root / "annotation_summary.csv"
         pd.DataFrame(rows).to_csv(summary_file, index=False)
         print(f"Combined summary: {summary_file}")
 
+    #append provenance to warehouse log
     warehouse_file = append_warehouse(out_root, warehouse_rows)
     print(f"Warehouse log: {warehouse_file}")
     return 0

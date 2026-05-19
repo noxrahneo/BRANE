@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clean Stage-13 GO/pathway enrichment for network and hub-level analyses."""
+"""GO/KEGG/Reactome pathway enrichment via g:Profiler for hub gene sets and top Leiden modules."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def _safe_symbol_list(series: pd.Series) -> list[str]:
 
 
 def _link_type_detail(edges_df: pd.DataFrame) -> pd.Series:
-    """Derive S_case/S_ctrl split from rho columns; return link_type_detail series."""
+    #derive S_case/S_ctrl split from rho columns; return link_type_detail series
     def _detail(row: pd.Series) -> str:
         if row["link_type"] != "S":
             return str(row["link_type"])
@@ -84,11 +84,7 @@ def _link_type_detail(edges_df: pd.DataFrame) -> pd.Series:
 
 
 def load_tier_genes(pair_name: str, tier: str) -> tuple[list[str], list[str]]:
-    """Return (hub_genes, all_tier_genes) for the given pair and tier.
-
-    hub_genes   — pre-computed top-50 hubs from 20_node_annotation
-    all_tier_genes — all genes that appear in edges of this tier
-    """
+    #return (hub_genes, all_tier_genes): pre-computed top-50 hubs and all genes in this tier
     prefix = PAIR_SHORT.get(pair_name, pair_name)
     hub_file = NODE_ANNOT_DIR / pair_name / f"{prefix}_hubs_{tier}.csv"
     if not hub_file.exists():
@@ -98,7 +94,7 @@ def load_tier_genes(pair_name: str, tier: str) -> tuple[list[str], list[str]]:
     sym_col = "approved_symbol" if "approved_symbol" in hubs_df.columns else "gene"
     hub_genes = _safe_symbol_list(hubs_df[sym_col])
 
-    # All genes in this tier's edges
+    #all genes in this tier's edges
     edge_file = CSD_NETWORKS_DIR / pair_name / f"{pair_name}_differential_edges_permutation.csv"
     edges_df = pd.read_csv(edge_file, low_memory=False)
     edges_df["link_type_detail"] = _link_type_detail(edges_df)
@@ -114,7 +110,7 @@ def load_module_genes(
     pair_name: str,
     top_n: int = TOP_MODULES_N,
 ) -> list[tuple[int, int, str, list[str]]]:
-    """Return top-N modules by size as list of (module_id, n_genes, cell_type, gene_list)."""
+    #return top-N modules by size as list of (module_id, n_genes, cell_type, gene_list)
     prefix = PAIR_SHORT.get(pair_name, pair_name)
     nodes_file = NODE_ANNOT_DIR / pair_name / f"{prefix}_nodes.csv"
     modules_file = NODE_ANNOT_DIR / pair_name / f"{prefix}_modules.csv"
@@ -153,7 +149,7 @@ def module_output_dir(pair_name: str, module_id: int) -> Path:
 def run_module_analysis(
     pair_name: str,
 ) -> tuple[list[dict[str, Any]], list[pd.DataFrame]]:
-    """Run enrichment on each of the top-N Leiden modules for a pair."""
+    #run enrichment on each of the top-N Leiden modules for a pair
     summary_rows: list[dict[str, Any]] = []
     combined_frames: list[pd.DataFrame] = []
 
@@ -284,7 +280,7 @@ def call_gprofiler(
         err_df.attrs["api_error"] = True
         return err_df
 
-    # Critical fix: all_results=True, then significant filter on client side.
+    #critical fix: all_results=True, then significant filter on client side.
     df = df[df["significant"].eq(True)].copy()
     return df
 
@@ -350,17 +346,17 @@ def save_analysis_outputs(
 
 
 def _filter_for_dotplot(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove overly generic terms, deduplicate synonyms, limit per source."""
+    #remove overly generic terms, deduplicate synonyms, limit per source
     out = df.copy()
-    # Drop terms where >40% of query genes hit the term — too broad to interpret
+    #drop terms where >40% of query genes hit the term — too broad to interpret
     if "gene_ratio" in out.columns:
         out = out[out["gene_ratio"] <= 0.4]
-    # Within each source, drop terms that share the same adjusted_p as a
+    #within each source, drop terms that share the same adjusted_p as a
     # higher-ranked term — these are typically GO synonyms / parent-child pairs
     if "source" in out.columns and "adjusted_p" in out.columns:
         out = out.sort_values("adjusted_p")
         out = out.drop_duplicates(subset=["source", "adjusted_p"], keep="first")
-    # Keep at most 3 terms per source so no single database dominates
+    #keep at most 3 terms per source so no single database dominates
     if "source" in out.columns:
         out = (
             out.sort_values("adjusted_p")
@@ -395,20 +391,20 @@ def plot_dotplot(
         return
 
     plot_df = plot_df.copy()
-    # Sort: most significant at the top
+    #sort: most significant at the top
     plot_df = plot_df.sort_values("adjusted_p", ascending=False).reset_index(drop=True)
 
     n_terms = len(plot_df)
     fig_height = max(4, 0.45 * n_terms + 2.5)
     fig, ax = plt.subplots(figsize=(10, fig_height))
 
-    # Colour scale: p.adjust, red = most significant, blue = least
+    #colour scale: p.adjust, red = most significant, blue = least
     p_vals = plot_df["adjusted_p"].clip(lower=1e-300)
     norm = mcolors.Normalize(vmin=p_vals.min(), vmax=p_vals.max())
     cmap = cm.get_cmap("RdYlBu")  # red (low p) \u2192 yellow \u2192 blue (high p)
     colors = [cmap(norm(p)) for p in p_vals]
 
-    # Dot size: gene_ratio (percentage of query genes in term); scale to visible pts
+    #dot size: gene_ratio (percentage of query genes in term); scale to visible pts
     gene_ratios = plot_df["gene_ratio"].fillna(0)
     max_ratio = gene_ratios.max() if gene_ratios.max() > 0 else 1.0
     dot_sizes = (gene_ratios / max_ratio) * 250 + 30
@@ -435,12 +431,12 @@ def plot_dotplot(
     )
     ax.grid(axis="x", linestyle="--", linewidth=0.5, alpha=0.5, zorder=0)
 
-    # Colour bar for p.adjust
+    #colour bar for p.adjust
     cbar = fig.colorbar(sc, ax=ax, shrink=0.4, pad=0.02)
     cbar.set_label("p.adjust", fontsize=8)
     cbar.ax.tick_params(labelsize=7)
 
-    # Size legend for Percentage
+    #size legend for Percentage
     ratio_ticks = [0.2, 0.4, 0.6]
     size_handles = [
         Line2D([0], [0], marker="o", color="w",
@@ -543,7 +539,7 @@ def _run_single_analysis(
     analysis_type: str,
     query: list[str],
 ) -> tuple[dict[str, Any], pd.DataFrame | None]:
-    """Run one g:Profiler call and return (summary_row, result_df)."""
+    #run one g:Profiler call and return (summary_row, result_df)
     if len(query) < MIN_QUERY_GENES_HUB:
         reason = f"fewer than {MIN_QUERY_GENES_HUB} query genes ({len(query)})"
         logging.info("%s | %s | %s skipped: %s", pair_name, tier, analysis_type, reason)
@@ -604,7 +600,7 @@ def save_combined(frames: list[pd.DataFrame]) -> None:
 
 
 def print_test_gprofiler_structure() -> int:
-    """Single live API test: print raw response structure and required keys."""
+    #single live API test: print raw response structure and required keys
     pair_name = PAIR_NAMES[0]
     try:
         hub_genes, _ = load_tier_genes(pair_name, "D")
@@ -663,7 +659,7 @@ def main(modules_only: bool = False) -> int:
             continue
 
     if modules_only:
-        # Append to existing summary rather than overwrite tier results
+        #append to existing summary rather than overwrite tier results
         existing_summary = OUTPUT_ROOT / "enrichment_summary.csv"
         existing_combined = OUTPUT_ROOT / "enrichment_combined.csv"
         if existing_summary.exists():

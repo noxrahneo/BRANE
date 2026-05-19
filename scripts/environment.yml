@@ -7,21 +7,29 @@ dependencies:
   - python=3.10
   - ipykernel
   - jupyter
+  - anndata
+  - h5py
+  - leidenalg
   - matplotlib
   - networkx
   - numpy
   - pandas
   - python-igraph
+  - pyyaml
   - scanpy
   - scikit-learn
   - scipy
   - seaborn
-  - leidenalg
+  - statsmodels
+  - tqdm
   - pyvis
   - pip
   - pip:
-    - lifelines==0.30.0
+    - adjustText
     - decoupler==2.1.4
     - gprofiler-official==1.0.0
+    - lifelines==0.30.0
+    - matplotlib-venn
+    - mpltern
     - pyreadr==0.5.4
     - requests==2.32.5

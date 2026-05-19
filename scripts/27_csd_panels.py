@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # flake8: noqa: E501
-"""32b — Union network CSD panel figures.
+"""CSD panel figures per condition pair.
 
 Five publication-ready figures per condition pair:
   {pair}_shared_network.png   — shared genes, all C/S/D edges, all modules coloured
@@ -36,7 +36,7 @@ import pandas as pd
 
 from utils.network_utils import resolve_base
 
-# ── visual constants ──────────────────────────────────────────────────────────
+#visual constants
 EDGE_COLORS = {"C": "#2b6fb0", "S": "#2a9d8f", "D": "#e63946"}
 EDGE_LABELS = {"C": "C — Conserved", "S": "S — Specific", "D": "D — Differentiated"}
 
@@ -48,7 +48,7 @@ TOP_LABEL_GENES = 15           # hub gene labels per panel
 
 
 def _make_palette(n: int) -> list[str]:
-    """Return n visually distinct hex colours, cycling tab20 for large n."""
+    #return n visually distinct hex colours, cycling tab20 for large n
     base = [
         "#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f",
         "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac",
@@ -61,7 +61,7 @@ def _make_palette(n: int) -> list[str]:
     return [mcolors.to_hex(cmap(i)) for i in range(n)]
 
 
-# ── graph helpers ─────────────────────────────────────────────────────────────
+#graph helpers
 def leiden_on_graph(g: nx.Graph, seed: int = 7) -> dict[str, int]:
     if g.number_of_nodes() < 2 or g.number_of_edges() < 1:
         return {str(n): 0 for n in g.nodes()}   # module 0 = singleton/no-module
@@ -86,14 +86,13 @@ def leiden_on_graph(g: nx.Graph, seed: int = 7) -> dict[str, int]:
 
 
 def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7) -> dict[str, tuple[float, float]]:
-    """Spring layout on inter-module graph for centroid placement; spring within each module."""
+    #spring layout on inter-module meta-graph for centroids; spring within each module
     buckets: dict[int, list[str]] = {}
     for node, mod in node_to_module.items():
         if node in g:
             buckets.setdefault(mod, []).append(node)
 
-    # separate singletons (mod=0 or size-1 modules) from proper modules
-    # singletons will be placed peripherally after the main layout
+    #separate singletons (mod=0 or size-1) from proper modules; place singletons peripherally
     singleton_nodes: list[str] = []
     proper: list[tuple[int, list[str]]] = []
     for mod, nodes in buckets.items():
@@ -110,7 +109,7 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
         mod_id, nodes = proper[0]
         pos = dict(nx.spring_layout(g.subgraph(nodes), seed=seed, weight="weight", iterations=80))
     else:
-        # contracted meta-graph
+        #contracted meta-graph
         node_to_mod = {n: m for m, nodes in proper for n in nodes}
         meta = nx.Graph()
         for m, _ in proper:
@@ -128,9 +127,8 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
         n_mods = len(proper)
         spread  = max(12.0, n_mods * 3.0)
 
-        # detect fragmentation: if most modules have no inter-module edges,
-        # spring layout degenerates to a ring via pure repulsion.
-        # fix: random-scatter initialisation in a disk, then brief spring refinement.
+        #if most modules have no inter-module edges, spring degenerates to a ring;
+        #use random-disk init instead to break the repulsion-only symmetry
         meta_edges_nodes = set(u for u, v in meta.edges()) | set(v for u, v in meta.edges())
         frac_connected   = len(meta_edges_nodes) / n_mods if n_mods > 0 else 1.0
         k_meta = spread / math.sqrt(n_mods)
@@ -141,7 +139,7 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
                 angle  = rng.uniform(0, 2 * math.pi)
                 radius = spread * 0.45 * math.sqrt(rng.uniform(0.05, 1.0))
                 init_pos[mod_id] = np.array([radius * math.cos(angle), radius * math.sin(angle)])
-            # 40 iterations from random init: connected modules attract, disconnected don't ring
+            #40 iterations from random init: connected modules attract, disconnected don't ring
             meta_raw = nx.spring_layout(meta, pos=init_pos, seed=seed,
                                          weight="weight", k=k_meta, iterations=40)
         else:
@@ -171,7 +169,7 @@ def community_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7)
                 for node, (x, y) in sub_pos.items():
                     pos[node] = (cx + x * module_scale, cy + y * module_scale)
 
-    # place singletons: scatter them around a slightly larger bounding circle
+    #place singletons around a slightly larger bounding circle
     if singleton_nodes and pos:
         xs_all = [x for x, y in pos.values()]
         ys_all = [y for x, y in pos.values()]
@@ -205,7 +203,7 @@ def top_hub_genes(g: nx.Graph, n: int) -> list[str]:
     return sorted(dw, key=lambda x: dw[x], reverse=True)[:n]
 
 
-# ── loading ───────────────────────────────────────────────────────────────────
+#loading
 def load_edges(edges_file: Path) -> pd.DataFrame:
     df = pd.read_csv(edges_file)
     df["rho_case"]    = pd.to_numeric(df["rho_case"],    errors="coerce").fillna(0.0)
@@ -248,16 +246,10 @@ def build_directional_s_graph(edges_df: pd.DataFrame, case_dominant: bool) -> nx
     return g
 
 
-# ── drawing ───────────────────────────────────────────────────────────────────
+#drawing
 def component_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7,
                      min_blob_size: int = 5) -> dict[str, tuple[float, float]]:
-    """Layout for fragmented graphs: each connected component becomes its own blob.
-
-    Large components (≥ min_blob_size) are laid out internally with spring layout and
-    arranged via a meta-spring on the component graph.  Small components scatter in
-    the whitespace at the periphery.  Gives the same 'coloured blobs with gaps' look
-    as community_layout, maintaining visual consistency across all panel types.
-    """
+    #layout for fragmented graphs: large components as blobs, small scattered peripherally
     components = sorted(nx.connected_components(g), key=len, reverse=True)
     large = [(i, list(c)) for i, c in enumerate(components) if len(c) >= min_blob_size]
     small = [n for c in components if len(c) < min_blob_size for n in c]
@@ -265,19 +257,17 @@ def component_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7,
     rng = np.random.default_rng(seed)
 
     if not large:
-        # all singletons — just spread them
+        #all singletons — just spread them
         k = max(1.0, 4.0 / math.sqrt(max(g.number_of_nodes(), 1)))
         return nx.spring_layout(g, seed=seed, weight="weight", k=k, iterations=80)
 
-    # build a meta-graph of large components (no inter-component edges,
-    # so we use size-weighted initial positions to drive spread)
+    #build meta-graph of large components; use size-weighted positions to drive spread
     n_large = len(large)
     spread  = max(12.0, math.sqrt(n_large) * 6.0)
 
-    # initialise meta positions: largest component at centre, rest by size rank
+    #initialise meta positions: largest component at centre, rest by size rank
     meta = nx.Graph()
     meta.add_nodes_from(range(n_large))
-    # add dummy self-loop weights for spring init — actually just use pos init
     init_meta: dict[int, tuple[float, float]] = {}
     ncols = max(1, math.ceil(math.sqrt(n_large)))
     for rank, (comp_idx, comp_nodes) in enumerate(large):
@@ -290,7 +280,7 @@ def component_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7,
     meta_pos = nx.spring_layout(meta, seed=seed, pos=init_meta, fixed=None,
                                 k=spread / math.sqrt(n_large), iterations=60)
 
-    # scale meta positions
+    #scale meta positions to fill spread
     xs = [x for x, y in meta_pos.values()]
     ys = [y for x, y in meta_pos.values()]
     x_range = max(xs) - min(xs) or 1.0
@@ -310,7 +300,7 @@ def component_layout(g: nx.Graph, node_to_module: dict[str, int], seed: int = 7,
         for node, (x, y) in sub_pos.items():
             pos[node] = (cx + x * mod_scale, cy + y * mod_scale)
 
-    # scatter small components around the periphery (not on a ring — random angles)
+    #scatter small components at random angles around the periphery
     if pos and small:
         all_xs = [x for x, y in pos.values()]
         all_ys = [y for x, y in pos.values()]
@@ -335,7 +325,7 @@ def draw_network(
     g: nx.Graph,
     title: str,
     subtitle: str,
-    edge_type: str,          # "C", "D", or "S" — determines edge colour
+    edge_type: str,          #"C", "D", or "S" — determines edge colour
     out_path: Path,
     dpi: int,
     seed: int,
@@ -344,7 +334,7 @@ def draw_network(
     edge_quantile: float = 0.30,
     figsize: tuple[float, float] = (22, 18),
 ) -> None:
-    """Draw a single network panel coloured by Leiden modules and save to file."""
+    #draw single-edge-type network coloured by leiden modules
     fig, ax = plt.subplots(figsize=figsize)
     fig.patch.set_facecolor(_BG_COLOR)
     ax.set_facecolor(_BG_COLOR)
@@ -357,8 +347,7 @@ def draw_network(
         plt.close(fig)
         return
 
-    # remove small components (singletons, pairs, and components < 8 genes)
-    # so only co-expression clusters of biological depth are shown
+    #remove components < 8 genes so only biologically deep clusters are shown
     MIN_COMP = 8
     keep = {n for comp in nx.connected_components(g) if len(comp) >= MIN_COMP for n in comp}
     n_excluded = g.number_of_nodes() - len(keep)
@@ -372,11 +361,11 @@ def draw_network(
         plt.close(fig)
         return
 
-    # Leiden clustering — used for both layout and colouring
+    #leiden clustering used for both layout and colouring
     mod_map = leiden_on_graph(g, seed=seed)
     pos     = community_layout(g, mod_map, seed=seed)
 
-    # rank modules by size; top _TOP_MODS_COLORED get vivid colours, rest gray
+    #rank modules by size; top _TOP_MODS_COLORED get vivid colours, rest gray
     mod_sizes: dict[int, int] = {}
     for n_, m in mod_map.items():
         mod_sizes[m] = mod_sizes.get(m, 0) + 1
@@ -392,7 +381,7 @@ def draw_network(
         for n_ in g.nodes()
     }
 
-    # edges
+    #draw top-quantile edges
     ec_hex = EDGE_COLORS[edge_type]
     all_e  = list(g.edges(data=True))
     elist  = []
@@ -404,7 +393,7 @@ def draw_network(
             nx.draw_networkx_edges(g, pos, edgelist=elist, ax=ax,
                                    edge_color=ec_hex, alpha=edge_alpha, width=edge_width)
 
-    # nodes
+    #draw nodes sized by weighted degree
     sizes     = degree_scaled_sizes(g)
     node_list = list(g.nodes())
     node_colors = [node_color_map[n_] for n_ in node_list]
@@ -419,7 +408,7 @@ def draw_network(
         nx.draw_networkx_labels(g, pos, labels={n_: n_ for n_ in hubs}, ax=ax,
                                 font_size=9, font_color="#1d3557", font_weight="bold")
 
-    # legend: top modules with vivid colours + one gray entry for the rest
+    #legend: vivid colours for top modules, gray for rest
     patches = [mpatches.Patch(color=mod_color[m],
                                label=f"Module {i+1}  (n={mod_sizes[m]})")
                for i, m in enumerate(top_mods)]
@@ -461,7 +450,7 @@ def draw_shared_network(
     edge_quantile: float = 0.40,
     figsize: tuple[float, float] = (22, 18),
 ) -> None:
-    """Fig 1 variant: shared network with all three CSD edge types."""
+    #draw shared network with all three csd edge types
     fig, ax = plt.subplots(figsize=figsize)
     fig.patch.set_facecolor(_BG_COLOR)
     ax.set_facecolor(_BG_COLOR)
@@ -484,7 +473,7 @@ def draw_shared_network(
 
     pos = community_layout(g, mod_map, seed=seed)
 
-    # edges: one pass per CSD type
+    #draw top-quantile edges, one pass per csd type
     all_e   = list(g.edges(data=True))
     weights = np.array([d.get("weight", 0.0) for _, _, d in all_e], dtype=float)
     thresh  = float(np.quantile(weights, edge_quantile))
@@ -511,7 +500,7 @@ def draw_shared_network(
         nx.draw_networkx_labels(g, pos, labels={n_: n_ for n_ in hubs}, ax=ax,
                                 font_size=9, font_color="#1d3557", font_weight="bold")
 
-    # module legend
+    #module legend
     legend_mods = real_mods[:12]
     patches = [mpatches.Patch(color=mod_color[m], label=f"Module {i+1}  (n={mod_sizes[m]})")
                for i, m in enumerate(legend_mods)]
@@ -520,7 +509,7 @@ def draw_shared_network(
     ax.legend(handles=patches, loc="lower right", fontsize=8, framealpha=0.75,
               edgecolor="none", title=f"{len(real_mods)} modules", title_fontsize=8)
 
-    # CSD edge legend
+    #csd edge legend
     edge_patches = [mpatches.Patch(color=EDGE_COLORS[t], label=EDGE_LABELS[t])
                     for t in ("C", "S", "D")]
     fig.legend(handles=edge_patches, loc="lower center", ncol=3, fontsize=10,
@@ -539,7 +528,7 @@ def draw_shared_network(
     plt.close(fig)
 
 
-# ── per-pair runner ───────────────────────────────────────────────────────────
+#per-pair runner
 def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
              out_root: Path, dpi: int, seed: int) -> None:
     if "__vs__" not in pair_name:
@@ -566,7 +555,7 @@ def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
 
     label = pair_name.replace("__vs__", " vs ")
 
-    # ── Fig 1: shared genes, all C/S/D ───────────────────────────────────────
+    #fig 1: shared genes, all C/S/D
     print("  [1/5] shared network (C+S+D)…")
     g_shared = build_graph(edges_df, {"C", "S", "D"}, node_filter=shared_genes)
     print(f"        {g_shared.number_of_nodes():,} nodes  {g_shared.number_of_edges():,} edges")
@@ -578,7 +567,7 @@ def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
         dpi=dpi, seed=seed,
     )
 
-    # ── Fig 2: shared genes, C only ──────────────────────────────────────────
+    #fig 2: shared genes, C only
     print("  [2/5] shared C edges…")
     g_c = build_graph(edges_df, {"C"}, node_filter=shared_genes)
     print(f"        {g_c.number_of_nodes():,} nodes  {g_c.number_of_edges():,} edges")
@@ -592,7 +581,7 @@ def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
         figsize=(28, 20),
     )
 
-    # ── Fig 3: shared genes, D only ──────────────────────────────────────────
+    #fig 3: shared genes, D only
     print("  [3/5] shared D edges…")
     g_d = build_graph(edges_df, {"D"}, node_filter=shared_genes)
     print(f"        {g_d.number_of_nodes():,} nodes  {g_d.number_of_edges():,} edges")
@@ -606,7 +595,7 @@ def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
         figsize=(28, 20),
     )
 
-    # ── Fig 4: case-specific S edges, all genes ───────────────────────────────
+    #fig 4: case-specific S edges, all genes
     print("  [4/5] tumour-gained S edges…")
     g_s_case = build_directional_s_graph(edges_df, case_dominant=True)
     print(f"        {g_s_case.number_of_nodes():,} nodes  {g_s_case.number_of_edges():,} edges")
@@ -619,7 +608,7 @@ def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
         dpi=dpi, seed=seed, edge_alpha=0.30, edge_quantile=0.30,
     )
 
-    # ── Fig 5: ctrl-specific S edges, all genes ───────────────────────────────
+    #fig 5: ctrl-specific S edges, all genes
     print("  [5/5] normal-retained S edges…")
     g_s_ctrl = build_directional_s_graph(edges_df, case_dominant=False)
     print(f"        {g_s_ctrl.number_of_nodes():,} nodes  {g_s_ctrl.number_of_edges():,} edges")
@@ -635,7 +624,7 @@ def run_pair(pair_name: str, network_dir: Path, shared_dir: Path,
     print(f"  done → {pair_out}")
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+#cli
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="CSD panel figures for union networks")
     p.add_argument("--network-dir", default="results/14_csd_networks")
@@ -647,13 +636,16 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args    = parse_args()
+
+    #resolve paths and create output dir
     net_dir = resolve_base(args.network_dir)
     shr_dir = resolve_base(args.shared_dir)
     out_dir = resolve_base(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #discover pair dirs and filter to requested subset if specified
     pair_dirs = sorted([p for p in net_dir.iterdir() if p.is_dir() and "__vs__" in p.name])
     if args.pair:
         keep = set(args.pair)
@@ -661,12 +653,14 @@ def main() -> None:
     if not pair_dirs:
         raise ValueError("No pair directories found")
 
+    #generate five panel figures per pair
     for pair_dir in pair_dirs:
         run_pair(pair_name=pair_dir.name, network_dir=net_dir, shared_dir=shr_dir,
                  out_root=out_dir, dpi=args.dpi, seed=args.seed)
 
     print(f"\nDone → {out_dir}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

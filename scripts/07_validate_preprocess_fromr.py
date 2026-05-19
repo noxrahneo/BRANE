@@ -3,7 +3,7 @@
 
 R_TRANSLATED: yes
 
-Source stage script: 04_per_sample_preprocess_fromr.py.
+Source stage script: 06_per_sample_preprocess_fromr.py.
 """
 
 from __future__ import annotations
@@ -240,24 +240,25 @@ def validate_condition(
     filtered_dir = filtered_base / condition
     preprocessed_dir = preprocessed_base / condition
 
+    #find filtered reference files for this condition
     filtered_files = sorted(filtered_dir.glob("*_filtered.h5ad"))
     if not filtered_files:
         print(f"Skipping {condition}: no *_filtered.h5ad files found")
         return []
 
     print(f"\nCondition: {condition} | Samples: {len(filtered_files)}")
+
+    #index preprocessed files by sample name for fast lookup
     pre_index = {
         sample_from_preprocessed(p): p
         for p in preprocessed_dir.glob("*_preprocessed.h5ad")
     }
 
+    #validate each sample and collect rows
     rows: list[dict] = []
     for file_path in filtered_files:
         sample = sample_from_filtered(file_path)
-        pre_file = pre_index.get(
-            sample,
-            preprocessed_dir / f"{sample}_preprocessed.h5ad",
-        )
+        pre_file = pre_index.get(sample, preprocessed_dir / f"{sample}_preprocessed.h5ad")
         row = validate_one(sample, file_path, pre_file, args)
         row["Condition"] = condition
         rows.append(row)
@@ -267,11 +268,14 @@ def validate_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output dir
     filtered_base = resolve_base(args.filtered_dir)
     preprocessed_base = resolve_base(args.preprocessed_dir)
     out_dir = resolve_base(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         conditions = list_conditions(filtered_base)
         if not conditions:
@@ -282,6 +286,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions with fuzzy matching on failure
     try:
         targets = resolve_conditions(filtered_base, args.condition)
     except ValueError as exc:
@@ -292,15 +297,11 @@ def main() -> int:
         print(f"ERROR: No condition folders found in {filtered_base}")
         return 1
 
+    #validate each condition and write per-condition csv
     all_rows: list[dict] = []
     processed_conditions = 0
     for condition in targets:
-        rows = validate_condition(
-            condition,
-            filtered_base,
-            preprocessed_base,
-            args,
-        )
+        rows = validate_condition(condition, filtered_base, preprocessed_base, args)
         if not rows:
             continue
         processed_conditions += 1
@@ -313,9 +314,8 @@ def main() -> int:
         print("ERROR: No samples were validated.")
         return 1
 
-    report = pd.DataFrame(all_rows).sort_values(
-        ["Condition", "status", "SampleName"]
-    ).reset_index(drop=True)
+    #write combined report csv and json summary
+    report = pd.DataFrame(all_rows).sort_values(["Condition", "status", "SampleName"]).reset_index(drop=True)
     csv_path = out_dir / f"preprocess_validation_{args.condition}.csv"
     report.to_csv(csv_path, index=False)
 

@@ -184,6 +184,7 @@ def save_filtered_sample(
 def main() -> int:
     args = parse_args()
 
+    #resolve paths relative to repo root
     repo_root = Path(__file__).resolve().parents[1]
     cohort_path = (repo_root / args.cohort).resolve()
     data_dir = (repo_root / args.data_dir).resolve()
@@ -191,6 +192,7 @@ def main() -> int:
     out_dir = (repo_root / args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #load cohort and validate required columns
     if not cohort_path.exists():
         print(f"ERROR: Cohort file not found: {cohort_path}")
         return 1
@@ -211,6 +213,7 @@ def main() -> int:
         print(f"ERROR: Missing required cohort columns: {missing}")
         return 1
 
+    #list available conditions and exit if requested
     options = get_available_conditions(cohort)
     if args.list_conditions:
         print("Available conditions:")
@@ -218,6 +221,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #subset to requested condition with fuzzy suggestions on failure
     selected = select_samples(cohort, args.condition)
     if selected.empty:
         print(f"ERROR: No samples found for condition='{args.condition}'.")
@@ -232,6 +236,7 @@ def main() -> int:
     summary_rows = []
     seen_condition_map: set[tuple[str, str]] = set()
 
+    #filter cells and genes for each sample
     for idx, row in selected.iterrows():
         sample_name = str(row["SampleName"])
         condition = str(row["Condition"])
@@ -259,6 +264,7 @@ def main() -> int:
             adata = filter_genes(adata)
             n_cells_after, n_genes_after = adata.n_obs, adata.n_vars
 
+            #log the condition -> safe dir name mapping once per condition
             safe_condition = safe_path_component(condition)
             map_key = (condition, safe_condition)
             if map_key not in seen_condition_map:
@@ -292,6 +298,7 @@ def main() -> int:
         print("ERROR: No samples were processed.")
         return 1
 
+    #save filtering summary csv
     summary = pd.DataFrame(summary_rows)
     summary_name = "filtering_summary.csv"
     if args.condition.lower() != "all":

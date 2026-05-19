@@ -143,6 +143,7 @@ def sample_name(path: Path) -> str:
 
 
 def load_condition_samples(condition_dir: Path) -> list[ad.AnnData]:
+    #load all preprocessed h5ad files for one condition and tag obs with metadata
     files = sorted(condition_dir.glob("*_preprocessed.h5ad"))
     samples: list[ad.AnnData] = []
     for fpath in files:
@@ -159,6 +160,7 @@ def build_joint_object(
     samples: list[ad.AnnData],
     n_top_genes: int,
 ) -> ad.AnnData:
+    #concatenate per-sample objects on shared gene intersection
     merged = ad.concat(
         samples,
         join="inner",
@@ -168,12 +170,14 @@ def build_joint_object(
         merge="same",
     )
 
+    #restore raw counts and re-normalise on the joint matrix
     if "counts" in merged.layers:
         merged.X = merged.layers["counts"].copy()
 
     sc.pp.normalize_total(merged, target_sum=1e4)
     sc.pp.log1p(merged)
 
+    #select hvgs across samples; fall back without batch_key for single-sample conditions
     try:
         sc.pp.highly_variable_genes(
             merged,
@@ -192,6 +196,7 @@ def build_joint_object(
             inplace=True,
         )
 
+    #subset to hvg genes only
     if "highly_variable" in merged.var.columns:
         merged = merged[:, merged.var["highly_variable"].values].copy()
 
@@ -206,9 +211,11 @@ def run_joint_analysis(
     resolution: float,
     umap_min_dist: float,
 ) -> ad.AnnData:
+    #optional combat batch correction by sample
     if integration_method == "combat":
         sc.pp.combat(adata, key="SampleName")
 
+    #scale, pca, neighborhood graph, umap, leiden clustering
     sc.pp.scale(adata, max_value=10.0)
     sc.tl.pca(adata, n_comps=n_pcs, svd_solver="arpack")
     sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
@@ -224,6 +231,7 @@ def integrate_condition(
     input_base = resolve_base(args.input_dir)
     output_base = resolve_base(args.output_dir)
 
+    #load all samples for this condition
     condition_dir = input_base / condition
     samples = load_condition_samples(condition_dir)
     if not samples:
@@ -231,6 +239,8 @@ def integrate_condition(
         return None
 
     print(f"\nCondition: {condition} | Samples: {len(samples)}")
+
+    #build joint object and run integration pipeline
     merged = build_joint_object(samples, n_top_genes=args.n_top_genes)
     merged = run_joint_analysis(
         merged,
@@ -241,33 +251,23 @@ def integrate_condition(
         umap_min_dist=args.umap_min_dist,
     )
 
+    #save integrated h5ad, cell metadata, and umap coordinates
     out_dir = output_base / condition
     out_dir.mkdir(parents=True, exist_ok=True)
 
     integrated_file = out_dir / f"{condition}_integrated.h5ad"
     merged.write_h5ad(integrated_file)
 
-    obs_cols = [
-        col
-        for col in ["SampleName", "Condition", "leiden"]
-        if col in merged.obs.columns
-    ]
+    obs_cols = [col for col in ["SampleName", "Condition", "leiden"] if col in merged.obs.columns]
     obs_path = out_dir / f"{condition}_cell_metadata.csv"
     merged.obs[obs_cols].to_csv(obs_path)
 
     umap_path = out_dir / f"{condition}_umap.csv"
     if "X_umap" in merged.obsm:
-        umap_df = pd.DataFrame(
-            merged.obsm["X_umap"],
-            index=merged.obs_names,
-            columns=["UMAP1", "UMAP2"],
-        )
+        umap_df = pd.DataFrame(merged.obsm["X_umap"], index=merged.obs_names, columns=["UMAP1", "UMAP2"])
         umap_df.to_csv(umap_path)
 
-    if "leiden" in merged.obs.columns:
-        n_clusters = int(merged.obs["leiden"].nunique())
-    else:
-        n_clusters = 0
+    n_clusters = int(merged.obs["leiden"].nunique()) if "leiden" in merged.obs.columns else 0
     return {
         "Condition": condition,
         "Samples": len(samples),
@@ -283,10 +283,13 @@ def integrate_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output root
     input_base = resolve_base(args.input_dir)
     output_base = resolve_base(args.output_dir)
     output_base.mkdir(parents=True, exist_ok=True)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         conditions = list_conditions(input_base)
         if not conditions:
@@ -297,6 +300,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions with fuzzy matching on failure
     try:
         targets = resolve_conditions(input_base, args.condition)
     except ValueError as exc:
@@ -307,6 +311,7 @@ def main() -> int:
         print(f"ERROR: No condition folders found in {input_base}")
         return 1
 
+    #integrate each condition and collect summary rows
     rows = []
     for condition in targets:
         row = integrate_condition(condition, args)
@@ -317,11 +322,8 @@ def main() -> int:
         print("ERROR: No conditions were integrated.")
         return 1
 
-    summary_name = (
-        "integration_summary.csv"
-        if len(targets) > 1
-        else f"integration_summary_{targets[0]}.csv"
-    )
+    #write summary csv
+    summary_name = "integration_summary.csv" if len(targets) > 1 else f"integration_summary_{targets[0]}.csv"
     summary_path = output_base / summary_name
     pd.DataFrame(rows).to_csv(summary_path, index=False)
 

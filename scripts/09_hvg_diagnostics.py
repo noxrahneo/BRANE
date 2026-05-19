@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Generate HVG and PCA diagnostics per condition.
-
-Outputs per condition:
-- hvg_gene_stats.csv (mean/variance/HVG flag)
-- hvg_diagnostic_panel.png:
-  A) mean vs variance with binned trend line
-  B) mean vs normalized dispersion with HVGs highlighted
-  C) histogram of gene variance (all genes vs selected HVGs)
-- hvg_summary.json
-- pca_scree_with_elbow.png (if integrated PCA exists)
-- pca_variance_ratio.csv (if integrated PCA exists)
-"""
+"""HVG gene stats, diagnostic panel, and PCA scree plots per integrated condition."""
 
 from __future__ import annotations
 
@@ -145,6 +134,7 @@ def load_merged_condition(
     condition: str,
     target_sum: float,
 ) -> ad.AnnData:
+    #load all per-sample preprocessed h5ad files for this condition
     cdir = pre_dir / condition
     files = sorted(cdir.glob("*_preprocessed.h5ad"))
     if not files:
@@ -157,6 +147,7 @@ def load_merged_condition(
         adata.obs["Condition"] = condition
         samples.append(adata)
 
+    #concatenate on shared gene intersection
     merged = ad.concat(
         samples,
         join="inner",
@@ -166,6 +157,7 @@ def load_merged_condition(
         merge="same",
     )
 
+    #restore raw counts and re-normalise for hvg computation
     if "counts" in merged.layers:
         merged.X = merged.layers["counts"].copy()
 
@@ -203,7 +195,7 @@ def binned_trend(mean: np.ndarray, var: np.ndarray, n_bins: int) -> tuple[np.nda
     if edges.size < 2:
         return np.array([], dtype=float), np.array([], dtype=float)
 
-    # Ensure full range is represented even when quantile edges collapse.
+    #ensure full range is represented even when quantile edges collapse
     edges[0] = np.min(m)
     edges[-1] = np.max(m)
     x_line: list[float] = []
@@ -222,25 +214,18 @@ def binned_trend(mean: np.ndarray, var: np.ndarray, n_bins: int) -> tuple[np.nda
 
 
 def elbow_from_variance(var_ratio: np.ndarray) -> int:
-    """Quantitative elbow detection following the HBC scRNA-seq training approach.
-
-    Two criteria are computed and the minimum (most conservative) is returned:
-      co1 — first PC where cumulative variance > 90% AND individual PC < 5%
-      co2 — last PC where the drop between consecutive PCs exceeds 0.1%
-
-    Reference: https://github.com/hbctraining/scRNA-seq/blob/master/lessons/elbow_plot_metric.md
-    """
+    #quantitative elbow detection: min of co1 (cumulative >90%, individual <5%) and co2 (last >0.1% drop)
     pct = np.asarray(var_ratio, dtype=float) * 100.0
     if pct.size <= 2:
         return int(max(1, pct.size))
 
     cumulative = np.cumsum(pct)
 
-    # co1: first PC where cumulative > 90% and individual contribution < 5%
+    #co1: first PC where cumulative > 90% and individual contribution < 5%
     co1_candidates = np.where((cumulative > 90.0) & (pct < 5.0))[0]
     co1 = int(co1_candidates[0] + 1) if co1_candidates.size > 0 else int(pct.size)
 
-    # co2: last PC where drop between consecutive PCs exceeds 0.1%
+    #co2: last PC where drop between consecutive PCs exceeds 0.1%
     drops = pct[:-1] - pct[1:]
     co2_candidates = np.where(drops > 0.1)[0]
     co2 = int(co2_candidates[-1] + 2) if co2_candidates.size > 0 else 1
@@ -263,7 +248,7 @@ def plot_hvg_panel(
 
     fig, axes = plt.subplots(1, 3, figsize=(17, 5), constrained_layout=True)
 
-    # A: mean-variance trend
+    #a: mean-variance trend
     axes[0].scatter(
         mean[~hvg_mask],
         var[~hvg_mask],
@@ -289,7 +274,7 @@ def plot_hvg_panel(
     axes[0].set_title("Before HVG: mean-variance trend")
     axes[0].legend(frameon=False, loc="best")
 
-    # B: mean vs normalized dispersion
+    #b: mean vs normalized dispersion
     if "dispersions_norm" in stats.columns:
         y_disp = stats["dispersions_norm"].to_numpy(dtype=float)
         ylabel = "Normalized dispersion"
@@ -300,8 +285,7 @@ def plot_hvg_panel(
         y_disp = np.full_like(mean, np.nan, dtype=float)
         ylabel = "Dispersion"
 
-    # Some Scanpy runs can leave dispersion columns empty. Fall back to
-    # variance/mean computed from the already log1p-normalized matrix.
+    #some scanpy runs leave dispersion columns empty; fall back to var/mean proxy
     if not np.any(np.isfinite(y_disp)):
         eps = 1e-12
         y_disp = var / np.maximum(mean, eps)
@@ -330,7 +314,7 @@ def plot_hvg_panel(
     axes[1].set_title(f"Selected HVGs highlighted (target={n_top_genes})")
     axes[1].legend(frameon=False, loc="best")
 
-    # C: histogram variance all vs hvg
+    #c: histogram variance all vs hvg
     vmax = float(np.nanpercentile(var[np.isfinite(var)], 99.5)) if np.any(np.isfinite(var)) else 1.0
     bins = np.linspace(0, max(vmax, 1e-8), 80)
     axes[2].hist(var, bins=bins, alpha=0.55, color="#93C5FD", label="All genes")
@@ -345,6 +329,7 @@ def plot_hvg_panel(
 
 
 def extract_pca_variance_ratio(integration_dir: Path, condition: str) -> np.ndarray | None:
+    #find the integrated h5ad for this condition
     cdir = integration_dir / condition
     preferred = cdir / f"{condition}_integrated.h5ad"
     h5ad_file = preferred if preferred.exists() else None
@@ -357,6 +342,7 @@ def extract_pca_variance_ratio(integration_dir: Path, condition: str) -> np.ndar
 
     adata = read_h5ad_compat(h5ad_file)
 
+    #extract variance ratio from uns or recompute from obsm if missing
     ratio = None
     pca_uns = adata.uns.get("pca", {}) if isinstance(adata.uns.get("pca", {}), dict) else {}
     if "variance_ratio" in pca_uns:
@@ -415,15 +401,12 @@ def run_condition(
     out_dir = out_root / condition
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    merged = load_merged_condition(
-        pre_dir=pre_dir,
-        condition=condition,
-        target_sum=float(args.target_sum),
-    )
-
+    #load merged, normalised matrix for hvg computation
+    merged = load_merged_condition(pre_dir=pre_dir, condition=condition, target_sum=float(args.target_sum))
     mean, var = compute_mean_var(merged.X)
 
-    hvg_kwargs = {
+    #select hvgs; include batch_key if sample column is present
+    hvg_kwargs: dict = {
         "n_top_genes": int(args.n_top_genes),
         "flavor": args.hvg_flavor,
         "subset": False,
@@ -434,10 +417,8 @@ def run_condition(
 
     sc.pp.highly_variable_genes(merged, **hvg_kwargs)
 
-    if "highly_variable" in merged.var.columns:
-        hv = merged.var["highly_variable"]
-    else:
-        hv = pd.Series(False, index=merged.var_names)
+    #build per-gene stats table with hvg flags and dispersion columns
+    hv = merged.var["highly_variable"] if "highly_variable" in merged.var.columns else pd.Series(False, index=merged.var_names)
     stats = pd.DataFrame(
         {
             "gene": merged.var_names.astype(str),
@@ -446,23 +427,18 @@ def run_condition(
             "highly_variable": hv.astype(bool).to_numpy(),
         }
     )
-
     for col in ["means", "dispersions", "dispersions_norm", "highly_variable_rank"]:
         if col in merged.var.columns:
             stats[col] = pd.to_numeric(merged.var[col], errors="coerce")
 
+    #save stats csv and diagnostic panel
     stats_file = out_dir / f"{condition}_hvg_gene_stats.csv"
     stats.to_csv(stats_file, index=False)
 
     panel_file = out_dir / f"{condition}_hvg_diagnostic_panel.png"
-    plot_hvg_panel(
-        out_png=panel_file,
-        stats=stats,
-        n_top_genes=int(args.n_top_genes),
-        n_bins=int(args.meanvar_bins),
-        dpi=int(args.dpi),
-    )
+    plot_hvg_panel(out_png=panel_file, stats=stats, n_top_genes=int(args.n_top_genes), n_bins=int(args.meanvar_bins), dpi=int(args.dpi))
 
+    #build summary dict
     hvg_mask = stats["highly_variable"].astype(bool)
     summary = {
         "condition": condition,
@@ -479,6 +455,7 @@ def run_condition(
         "panel_file": str(panel_file),
     }
 
+    #optional pca scree plot if integrated h5ad is available
     var_ratio = extract_pca_variance_ratio(integration_dir, condition)
     if var_ratio is not None:
         pca_csv = out_dir / f"{condition}_pca_variance_ratio.csv"
@@ -488,6 +465,7 @@ def run_condition(
         summary["pca_variance_file"] = str(pca_csv)
         summary["pca_scree_file"] = str(pca_png)
 
+    #write json summary
     summary_file = out_dir / f"{condition}_hvg_summary.json"
     summary_file.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
@@ -500,11 +478,14 @@ def run_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output root
     pre_dir = resolve_base(args.preprocessed_dir)
     integration_dir = resolve_base(args.integration_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         names = list_conditions(pre_dir)
         if not names:
@@ -515,6 +496,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions
     try:
         targets = resolve_conditions(pre_dir, args.condition)
     except ValueError as exc:
@@ -525,18 +507,12 @@ def main() -> int:
         print(f"ERROR: No condition folders found in {pre_dir}")
         return 1
 
+    #run diagnostics per condition and collect summaries
     summaries: list[dict[str, object]] = []
     for condition in targets:
-        summaries.append(
-            run_condition(
-                condition=condition,
-                pre_dir=pre_dir,
-                integration_dir=integration_dir,
-                out_root=out_root,
-                args=args,
-            )
-        )
+        summaries.append(run_condition(condition=condition, pre_dir=pre_dir, integration_dir=integration_dir, out_root=out_root, args=args))
 
+    #write combined summary csv
     pd.DataFrame(summaries).to_csv(out_root / "hvg_diagnostics_summary.csv", index=False)
     print(f"Done. Wrote diagnostics for {len(summaries)} condition(s) to {out_root}")
     return 0

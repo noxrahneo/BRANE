@@ -85,10 +85,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--de-filter-dir",
-        default=(
-            "results/10_deg_ttest/"
-            "zzz_de_gene_filters/per_condition"
-        ),
+        default="results/10_deg_ttest/de_gene_filters/per_condition",
         help="Directory containing <condition>_de_gene_allowlist.csv files",
     )
     parser.add_argument(
@@ -169,22 +166,10 @@ def resolve_requested_files(in_root: Path, requested: str) -> list[Path]:
 
 
 def compute_pearson_corr(x: np.ndarray) -> np.ndarray:
-    """Compute a Pearson correlation matrix between columns of ``x``.
-
-    Notes
-    -----
-    Uses SciPy correlation distance to derive Pearson correlation:
-    ``corr = 1 - correlation_distance``.
-    Variables are columns (genes) and rows are
-    observations (pseudobulk profiles).
-
-    We cast to float32 for storage efficiency and sanitize NaN/Inf values
-    (e.g., from zero-variance genes) to 0.0, then enforce a 1.0 diagonal.
-    """
-    # scipy.spatial.distance.pdist(..., metric="correlation") returns
-    # 1 - Pearson correlation between column vectors after centering.
+    #corr = 1 - scipy correlation distance (= pearson r between gene column vectors)
     dist = pdist(x.T, metric="correlation")
     corr = 1.0 - squareform(dist)
+    #cast to float32 and sanitize nan/inf from zero-variance genes
     corr = np.asarray(corr, dtype=np.float32)
     corr = np.nan_to_num(corr, nan=0.0, posinf=0.0, neginf=0.0)
     np.fill_diagonal(corr, 1.0)
@@ -303,18 +288,18 @@ def load_de_allowlist(
     return genes, allow_file
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths
     in_root = resolve_base(args.input_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
     de_filter_root = resolve_base(args.de_filter_dir)
 
-    print(
-        "Method: Pearson correlation "
-        "(SciPy correlation distance -> r = 1 - d)"
-    )
+    print("Method: Pearson correlation (SciPy correlation distance -> r = 1 - d)")
 
+    #resolve target condition files
     files = resolve_requested_files(in_root, args.condition)
     records: list[WarehouseRecord] = []
 
@@ -323,6 +308,7 @@ def main() -> None:
         cond_dir = out_root / condition
         cond_dir.mkdir(parents=True, exist_ok=True)
 
+        #load expression matrix and collect input diagnostics
         pdata = ad.read_h5ad(h5ad_file)
         x = np.asarray(pdata.X, dtype=np.float64)
 
@@ -334,6 +320,7 @@ def main() -> None:
         input_neg = int(np.sum(x < 0))
         input_zero_frac = sparsity_fraction(x)
 
+        #optionally filter genes to de allowlist
         de_filter_file_used = ""
         n_de_allowlist_total = 0
         n_de_genes_kept = 0
@@ -368,6 +355,7 @@ def main() -> None:
                         "but yielded 0 genes after thresholds"
                     )
 
+        #optionally remove zero-variance genes
         zero_var_removed = 0
         if args.drop_zero_variance_genes:
             std = x.std(axis=0)
@@ -387,6 +375,7 @@ def main() -> None:
                 f"correlation, got {x.shape[0]}"
             )
 
+        #compute correlation matrix and export pairs/edges
         corr = compute_pearson_corr(x)
         corr_offdiag = corr[np.triu_indices(corr.shape[0], k=1)]
         corr_offdiag_abs = np.abs(corr_offdiag)
@@ -505,7 +494,7 @@ def main() -> None:
                 date_utc=utc_now_iso(),
                 params_hash=params_hash(vars(args)),
                 condition=condition,
-                stage="08_correlation_pearson",
+                stage="pearson_correlation",
             )
         )
 
@@ -514,9 +503,11 @@ def main() -> None:
             f"edges(|r|>={args.min_abs_r})={edges_df.shape[0]}"
         )
 
+    #append warehouse provenance
     append_warehouse(out_root, records)
     print(f"Done. Correlation outputs: {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

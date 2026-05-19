@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 # flake8: noqa: E501
-"""Stage-09 branch B threshold runner (union-capable).
-
-Computes pair-specific permutation thresholds for C/S/D by averaging the
-permutation maxima across runs.
-"""
+"""Compute pair-specific permutation thresholds for C/S/D edge filtering."""
 
 from __future__ import annotations
 
@@ -21,7 +17,7 @@ from utils.network_utils import resolve_base, save_json
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run stage-09 permutation threshold estimation")
+    parser = argparse.ArgumentParser(description="Run permutation threshold estimation for CSD scoring")
     parser.add_argument(
         "--expr-dir",
         default="results/08_pre_correlation/per_condition",
@@ -30,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--shared-dir",
         default="results/12_csd_scoring",
-        help="Union-capable upstream output directory from script 28a",
+        help="CSD scoring output directory from 23_csd_scoring.py",
     )
     parser.add_argument(
         "--output-dir",
@@ -105,7 +101,7 @@ def plot_threshold_convergence(maxima_df: pd.DataFrame, out_png: Path, pair_name
     s_run = maxima_df["max_S"].expanding().mean().to_numpy(dtype=float)
     d_run = maxima_df["max_D"].expanding().mean().to_numpy(dtype=float)
 
-    # colours match EDGE_COLORS in 32_stage09_network_visualization.py
+    #colours match edge colours used in 26_csd_visualization.py
     CSD_COLORS = {"C": "#2b6fb0", "S": "#2a9d8f", "D": "#e63946"}
 
     fig, ax = plt.subplots(figsize=(8.4, 5.2), constrained_layout=True)
@@ -126,6 +122,7 @@ def run_pair(pair_dir: Path, expr_root: Path, out_root: Path, n_permutations: in
         raise ValueError(f"Invalid pair folder name: {pair_name}")
     case, ctrl = pair_name.split("__vs__", 1)
 
+    #load genes to use for this pair
     genes_keep_file = pair_dir / f"{pair_name}_genes_keep.txt"
     if not genes_keep_file.exists():
         raise FileNotFoundError(f"Missing genes_keep file: {genes_keep_file}")
@@ -137,6 +134,7 @@ def run_pair(pair_dir: Path, expr_root: Path, out_root: Path, n_permutations: in
     if genes_keep.size < 2:
         raise ValueError(f"{pair_name}: too few genes for correlation/permutation")
 
+    #load expression matrices for case and control
     case_expr_file = expr_root / f"{case}_pseudobulk_logcpm.h5ad"
     ctrl_expr_file = expr_root / f"{ctrl}_pseudobulk_logcpm.h5ad"
     if not case_expr_file.exists() or not ctrl_expr_file.exists():
@@ -152,7 +150,6 @@ def run_pair(pair_dir: Path, expr_root: Path, out_root: Path, n_permutations: in
     running_c: list[float] = []
     running_s: list[float] = []
     running_d: list[float] = []
-
     c_seen: list[float] = []
     s_seen: list[float] = []
     d_seen: list[float] = []
@@ -161,6 +158,7 @@ def run_pair(pair_dir: Path, expr_root: Path, out_root: Path, n_permutations: in
     _t0 = _time.perf_counter()
     _print_every = max(1, int(n_permutations) // 10)
 
+    #run permutations: shuffle expression per gene, recompute correlations, record maxima
     for i in range(1, int(n_permutations) + 1):
         x_case_p = permute_gene_wise_samples(x_case, rng)
         x_ctrl_p = permute_gene_wise_samples(x_ctrl, rng)
@@ -218,6 +216,7 @@ def run_pair(pair_dir: Path, expr_root: Path, out_root: Path, n_permutations: in
         "n_genes_missing_in_control_expr": int(genes_keep.size - n_present_ctrl),
     }
 
+    #save maxima csv, convergence plot, and threshold json
     pair_out = out_root / pair_name
     pair_out.mkdir(parents=True, exist_ok=True)
 
@@ -248,13 +247,16 @@ def run_pair(pair_dir: Path, expr_root: Path, out_root: Path, n_permutations: in
     }
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output dir
     expr_root = resolve_base(args.expr_dir)
     shared_root = resolve_base(args.shared_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #discover pair dirs and optionally filter to requested subset
     pair_dirs = sorted([p for p in shared_root.iterdir() if p.is_dir() and "__vs__" in p.name])
     if args.pair:
         keep = set(args.pair)
@@ -263,21 +265,19 @@ def main() -> None:
     if not pair_dirs:
         raise ValueError("No pair directories found to process")
 
+    #run permutation thresholds for each pair
     summaries: list[dict[str, object]] = []
     for idx, pair_dir in enumerate(pair_dirs):
-        summaries.append(
-            run_pair(
-                pair_dir=pair_dir,
-                expr_root=expr_root,
-                out_root=out_root,
-                n_permutations=int(args.n_permutations),
-                seed=int(args.seed) + idx,
-            )
-        )
+        summaries.append(run_pair(
+            pair_dir=pair_dir, expr_root=expr_root, out_root=out_root,
+            n_permutations=int(args.n_permutations), seed=int(args.seed) + idx,
+        ))
 
+    #write combined summary csv
     pd.DataFrame(summaries).sort_values("pair").to_csv(out_root / "differential_permutation_thresholds_summary.csv", index=False)
-    print(f"Done. Stage-09 permutation thresholds: {out_root}")
+    print(f"Done. Permutation thresholds: {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

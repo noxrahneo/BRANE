@@ -159,6 +159,7 @@ def load_integrated_objects(
     root: Path,
     conditions: list[str],
 ) -> dict[str, sc.AnnData]:
+    #load each integrated h5ad; skip if missing or has no umap
     out: dict[str, sc.AnnData] = {}
     for condition in conditions:
         cond_dir = root / condition
@@ -166,7 +167,6 @@ def load_integrated_objects(
         if h5ad is None:
             print(f"Skipping {condition}: no *_integrated.h5ad found")
             continue
-
         adata = sc.read_h5ad(h5ad)
         if "X_umap" not in adata.obsm:
             print(f"Skipping {condition}: X_umap missing")
@@ -223,6 +223,8 @@ def plot_panel(
 ) -> tuple[list[str], dict[str, tuple[float, float, float, float]]]:
     conditions = list(adatas.keys())
     rows, cols = panel_shape(len(conditions), n_cols)
+
+    #size figure to accommodate panel grid plus right-margin legend
     legend_width = max(3.5, 1.35 * max(1, legend_cols) + 1.0)
     fig_w = (5 * cols) + legend_width
     fig_h = 4.5 * rows
@@ -232,6 +234,7 @@ def plot_panel(
     categories = collect_categories(adatas, color_key)
     palette = build_palette(categories)
 
+    #draw one umap scatter per condition panel
     for idx, condition in enumerate(conditions):
         ax = axes_array[idx]
         adata = adatas[condition]
@@ -248,68 +251,37 @@ def plot_panel(
         for cat in dict.fromkeys(vals):
             mask = vals == cat
             ax.scatter(
-                umap[mask, 0],
-                umap[mask, 1],
-                s=point_size,
-                alpha=alpha,
+                umap[mask, 0], umap[mask, 1],
+                s=point_size, alpha=alpha,
                 c=[palette.get(cat, (0.5, 0.5, 0.5, 1.0))],
-                linewidths=0,
-                rasterized=True,
+                linewidths=0, rasterized=True,
             )
-
         ax.set_title(f"{condition} (n={adata.n_obs})")
         ax.set_xticks([])
         ax.set_yticks([])
 
+    #hide unused axes
     for idx in range(len(conditions), len(axes_array)):
         axes_array[idx].axis("off")
 
+    #build shared legend; truncate to max_items and note overflow
     shown = categories[: max(1, max_items)]
     handles = [
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor=palette[cat][:3],
-            markersize=6,
-            label=cat,
-        )
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=palette[cat][:3], markersize=6, label=cat)
         for cat in shown
     ]
-
     if handles:
-        fig.legend(
-            handles=handles,
-            loc="center right",
-            bbox_to_anchor=(0.992, 0.5),
-            frameon=False,
-            ncol=max(1, legend_cols),
-            fontsize=8,
-            title=f"Legend: {color_key}",
-        )
+        fig.legend(handles=handles, loc="center right", bbox_to_anchor=(0.992, 0.5),
+                   frameon=False, ncol=max(1, legend_cols), fontsize=8, title=f"Legend: {color_key}")
 
     if len(categories) > len(shown):
-        fig.text(
-            0.5,
-            0.02,
-            (
-                f"Showing first {len(shown)} of {len(categories)} "
-                "legend items. See CSV for full mapping."
-            ),
-            ha="center",
-            va="bottom",
-            fontsize=8,
-        )
+        fig.text(0.5, 0.02,
+                 f"Showing first {len(shown)} of {len(categories)} legend items. See CSV for full mapping.",
+                 ha="center", va="bottom", fontsize=8)
 
     fig.suptitle(f"UMAP panels by {color_key}", fontsize=14)
     fig.tight_layout(rect=(0.0, 0.04, 0.77, 0.96))
-    fig.savefig(
-        str(out_file),
-        dpi=dpi,
-        bbox_inches="tight",
-        pad_inches=0.1,
-    )
+    fig.savefig(str(out_file), dpi=dpi, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
     return categories, palette
 
@@ -332,10 +304,13 @@ def save_legend_assets(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output dir
     root = resolve_base(args.input_dir)
     out_dir = resolve_base(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         names = list_conditions(root)
         if not names:
@@ -346,6 +321,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions with fuzzy matching on failure
     try:
         targets = resolve_conditions(root, args.condition)
     except ValueError as exc:
@@ -356,37 +332,27 @@ def main() -> int:
         print(f"ERROR: No condition folders found in {root}")
         return 1
 
+    #load all integrated objects
     adatas = load_integrated_objects(root, targets)
     if not adatas:
         print("ERROR: No integrated condition objects available for plotting.")
         return 1
 
-    color_keys = [
-        key.strip() for key in args.color_keys.split(",") if key.strip()
-    ]
+    #parse color keys from comma-separated arg
+    color_keys = [key.strip() for key in args.color_keys.split(",") if key.strip()]
     if not color_keys:
         print("ERROR: No valid --color-keys provided.")
         return 1
 
+    #generate one panel figure and legend csv per color key
     for color_key in color_keys:
         out_file = out_dir / f"umap_panel_{safe_name(color_key)}.{args.format}"
         categories, palette = plot_panel(
-            adatas=adatas,
-            color_key=color_key,
-            out_file=out_file,
-            n_cols=args.n_cols,
-            point_size=args.point_size,
-            alpha=args.alpha,
-            dpi=args.dpi,
-            max_items=args.legend_max_items,
-            legend_cols=args.legend_cols,
+            adatas=adatas, color_key=color_key, out_file=out_file,
+            n_cols=args.n_cols, point_size=args.point_size, alpha=args.alpha,
+            dpi=args.dpi, max_items=args.legend_max_items, legend_cols=args.legend_cols,
         )
-        save_legend_assets(
-            color_key=color_key,
-            categories=categories,
-            palette=palette,
-            out_dir=out_dir,
-        )
+        save_legend_assets(color_key=color_key, categories=categories, palette=palette, out_dir=out_dir)
         print(f"Saved: {out_file}")
 
     print(f"\nPanel plotting complete. Conditions plotted: {len(adatas)}")

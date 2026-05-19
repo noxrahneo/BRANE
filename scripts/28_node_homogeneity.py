@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # flake8: noqa: E501
-"""33 — Node homogeneity analysis on union CSD networks.
+"""Node homogeneity analysis on CSD networks.
 
 For each gene in the union network, computes homogeneity score H:
 
@@ -37,14 +37,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.network_utils import resolve_base
 
-# ── constants ─────────────────────────────────────────────────────────────────
+#constants
 _BG   = "#fafafa"
 _EDGE_COLORS = {"C": "#2b6fb0", "S": "#2a9d8f", "D": "#e63946"}
 _DPI  = 150
 
 
 def compute_homogeneity(edges_df: pd.DataFrame) -> pd.DataFrame:
-    """Return per-gene homogeneity table from edge dataframe."""
+    #compute per-gene H score and edge type degree breakdown
     counts: dict[str, dict[str, int]] = defaultdict(lambda: {"C": 0, "S": 0, "D": 0})
     for _, row in edges_df.iterrows():
         lt = row["link_type"]
@@ -67,8 +67,8 @@ def compute_homogeneity(edges_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_boxplot(df: pd.DataFrame, pair_name: str, out_path: Path) -> None:
-    """H vs degree boxplot styled after supervisor's Fig 4a."""
-    # bin degrees: individual up to 10, then groups
+    #h vs degree boxplot; bin individual degrees up to 10 then grouped
+    #bin degrees: individual up to 10, then groups
     def bin_degree(k):
         if k <= 10:
             return str(k)
@@ -98,7 +98,7 @@ def plot_boxplot(df: pd.DataFrame, pair_name: str, out_path: Path) -> None:
                     whiskerprops=dict(color="#555"), capprops=dict(color="#555"),
                     flierprops=dict(marker=".", markersize=2, alpha=0.3, color="#888"))
 
-    # overlay means as red squares
+    #overlay means as red squares
     for i, vals in enumerate(grouped):
         if len(vals):
             ax.plot(i + 1, np.mean(vals), "rs", markersize=5, zorder=5)
@@ -118,12 +118,12 @@ def plot_boxplot(df: pd.DataFrame, pair_name: str, out_path: Path) -> None:
 
 
 def plot_ternary(df: pd.DataFrame, pair_name: str, out_path: Path) -> None:
-    """Ternary heatmap of (fC, fS, fD) fractions per gene."""
+    #ternary scatter of (fC, fS, fD) fractions per gene
     fig = plt.figure(figsize=(8, 7))
     fig.patch.set_facecolor(_BG)
     ax = fig.add_subplot(projection="ternary")
 
-    # scatter each gene as a point
+    #scatter each gene as a point on the ternary axes
     t = df["fC"].values   # top    = C
     l = df["fS"].values   # left   = S
     r = df["fD"].values   # right  = D
@@ -145,7 +145,7 @@ def plot_ternary(df: pd.DataFrame, pair_name: str, out_path: Path) -> None:
 
 
 def plot_venn(df: pd.DataFrame, pair_name: str, out_path: Path) -> None:
-    """Venn diagram of genes involved in C, S, D interactions."""
+    #venn diagram of genes involved in C, S, D interactions
     set_C = set(df[df["k_C"] > 0]["gene"])
     set_S = set(df[df["k_S"] > 0]["gene"])
     set_D = set(df[df["k_D"] > 0]["gene"])
@@ -182,44 +182,41 @@ def run_pair(pair_name: str, network_root: Path, out_root: Path) -> None:
     df = compute_homogeneity(edges_df)
     print(f"  genes: {len(df)}  |  median H: {df['H'].median():.3f}  |  mean H: {df['H'].mean():.3f}")
 
-    # save CSV
+    #save homogeneity csv and three diagnostic figures
     csv_path = pair_out / f"{pair_name}_node_homogeneity.csv"
     df.to_csv(csv_path, index=False)
     print(f"  saved → {csv_path}")
 
-    # Fig A — boxplot
     plot_boxplot(df, pair_name, pair_out / f"{pair_name}_homogeneity_boxplot.png")
     print(f"  saved → boxplot")
 
-    # Fig B — ternary heatmap
     plot_ternary(df, pair_name, pair_out / f"{pair_name}_ternary_heatmap.png")
     print(f"  saved → ternary heatmap")
 
-    # Fig C — Venn diagram
     plot_venn(df, pair_name, pair_out / f"{pair_name}_venn_diagram.png")
     print(f"  saved → venn diagram")
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pair", default=None, help="Run one pair only")
     parser.add_argument("--network-dir", default="results/14_csd_networks")
     parser.add_argument("--output-dir",  default="results/15_node_homogeneity")
     args = parser.parse_args()
 
+    #resolve paths and discover pairs
     network_root = resolve_base(args.network_dir)
     out_root     = resolve_base(args.output_dir)
 
-    if args.pair:
-        pairs = [args.pair]
-    else:
-        pairs = sorted(p.name for p in network_root.iterdir() if p.is_dir())
+    pairs = [args.pair] if args.pair else sorted(p.name for p in network_root.iterdir() if p.is_dir())
 
+    #run homogeneity analysis for each pair
     for pair in pairs:
         run_pair(pair, network_root, out_root)
 
     print(f"\nDone → {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

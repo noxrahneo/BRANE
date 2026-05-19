@@ -152,10 +152,10 @@ def main() -> int:
             print(f"Error: {name} not found at {path}")
             return 1
     
-    print (f"Loading metadata from both sources")
+    print("Loading metadata from both sources")
     sample_stats, table_ev4 = load_and_validate_metadata(sample_stats_path, table_ev4_path)
-    
-    print (f"Merging metadata")
+
+    print("Merging metadata")
     bigboss = merge_metadata(sample_stats, table_ev4)
     
     print("Adding file paths from raw data")
@@ -173,7 +173,6 @@ def main() -> int:
     bigboss.to_csv(out_path, index=False)
     
     print(f"Saved: {len(bigboss)} entries to {out_path}")
-    print(f"Rows: {len(bigboss)}")
     return 0
 
 if __name__ == "__main__":

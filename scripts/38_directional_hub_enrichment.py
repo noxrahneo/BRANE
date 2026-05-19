@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Directional hub enrichment: g:Profiler on UP- and DOWN-classified hub subsets.
-
-For each contrast, combines hub genes across D, S_case and S_ctrl tiers,
-splits by deg_direction (up/down), and runs g:Profiler on subsets with >=3 genes.
-Outputs full results CSVs and a summary table.
-"""
+"""g:Profiler enrichment on UP/DOWN hub subsets per contrast across D, S_case, and S_ctrl tiers."""
 
 from __future__ import annotations
 

@@ -18,7 +18,6 @@ HGNC_HEADERS = {"Accept": "application/json"}
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Normalise gene symbols against HGNC"
     )
@@ -52,17 +51,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_path(path_text: str) -> Path:
-    """Resolve relative/absolute filesystem paths consistently."""
+    #resolve relative/absolute path
     return Path(path_text).expanduser().resolve()
 
 
 def ensure_parent_dir(path: Path) -> None:
-    """Create parent directory if missing."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def cache_is_fresh(cache_path: Path, max_age_days: int) -> bool:
-    """Return True if cache exists and is newer than max-age threshold."""
+    #return True if cache exists and is newer than max-age threshold
     if not cache_path.exists():
         return False
     max_age = timedelta(days=int(max_age_days))
@@ -71,13 +69,13 @@ def cache_is_fresh(cache_path: Path, max_age_days: int) -> bool:
 
 
 def format_cache_date(cache_path: Path) -> str:
-    """Format cache file mtime for user-facing logs."""
+    #format cache file mtime as iso string
     mtime = datetime.fromtimestamp(cache_path.stat().st_mtime, tz=timezone.utc)
     return mtime.isoformat()
 
 
 def fetch_hgnc_docs() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Fetch all approved HGNC entries from REST API."""
+    #fetch all approved HGNC entries from REST API with pagination
     print("[HGNC] Fetching approved HGNC entries from REST API...")
 
     docs: list[dict[str, Any]] = []
@@ -138,7 +136,7 @@ def load_hgnc_data(
     cache_max_age: int,
     log_lines: list[str],
 ) -> list[dict[str, Any]]:
-    """Load HGNC data from fresh cache or API and update cache as needed."""
+    #load hgnc docs from cache if fresh, otherwise fetch from api and refresh cache
     if cache_is_fresh(cache_path, cache_max_age):
         print(f"[HGNC] Using fresh cache: {cache_path}")
         try:
@@ -178,7 +176,7 @@ def load_hgnc_data(
 
 
 def safe_symbol_list(entry: dict[str, Any], key: str) -> list[str]:
-    """Return cleaned symbol list from HGNC entry list-like field."""
+    #return cleaned list of symbols from a hgnc entry field that may be str or list
     value = entry.get(key)
     if value is None:
         return []
@@ -198,7 +196,7 @@ def build_hgnc_dictionaries(
     docs: list[dict[str, Any]],
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, str], dict[str, dict[str, Any]]]:
-    """Build approved set, alias mapping, and metadata dictionary."""
+    #build approved symbol set, alias->approved mapping, and per-symbol metadata dict
     print("[HGNC] Building symbol dictionaries...")
 
     approved_set: set[str] = set()
@@ -254,7 +252,7 @@ def normalise_gene_symbol(
     approved_set: set[str],
     alias_dict: dict[str, str],
 ) -> tuple[str, str]:
-    """Classify and normalise one input gene symbol."""
+    #return (approved_symbol, status) for one gene: unchanged, normalised, or unresolved
     if gene in approved_set:
         return gene, "unchanged"
     if gene in alias_dict:
@@ -268,7 +266,7 @@ def apply_normalisation(
     alias_dict: dict[str, str],
     hgnc_dict: dict[str, dict[str, Any]],
 ) -> pd.DataFrame:
-    """Apply HGNC normalisation logic row-wise and append output columns."""
+    #normalise each gene symbol row-wise and append hgnc metadata columns
     print("[HGNC] Normalising symbols...")
 
     rows: list[dict[str, Any]] = []
@@ -309,7 +307,7 @@ def apply_normalisation(
 
 
 def pct(count: int, total: int) -> float:
-    """Safe percentage helper."""
+    #safe percentage: 0.0 when total is zero
     if total <= 0:
         return 0.0
     return 100.0 * float(count) / float(total)
@@ -320,7 +318,7 @@ def write_log(
     log_lines: list[str],
     df_out: pd.DataFrame,
 ) -> None:
-    """Write detailed run log with status counts and symbol lists."""
+    #write run log with status counts, normalised mappings, and unresolved symbols
     print(f"[HGNC] Writing log: {log_path}")
 
     ensure_parent_dir(log_path)
@@ -406,7 +404,7 @@ def write_log(
 
 
 def run_validation(df_in: pd.DataFrame, df_out: pd.DataFrame) -> None:
-    """Run required validation checks before writing output CSV."""
+    #validate row count match, no null approved_symbols, and warn on high unresolved rate
     print("[HGNC] Running validation checks...")
 
     if int(df_out.shape[0]) != int(df_in.shape[0]):
@@ -433,10 +431,10 @@ def run_validation(df_in: pd.DataFrame, df_out: pd.DataFrame) -> None:
         )
 
 
-def main() -> None:
-    """Entry point for HGNC normalisation script."""
+def main() -> int:
     args = parse_args()
 
+    #resolve all paths
     input_path = resolve_path(args.input)
     output_path = resolve_path(args.output)
     log_path = resolve_path(args.log)
@@ -447,6 +445,7 @@ def main() -> None:
     print(f"[HGNC] Log: {log_path}")
     print(f"[HGNC] Cache: {cache_path}")
 
+    #load and validate input csv
     if not input_path.exists():
         raise FileNotFoundError(f"Input CSV does not exist: {input_path}")
 
@@ -457,48 +456,28 @@ def main() -> None:
 
     log_lines: list[str] = []
 
-    docs = load_hgnc_data(
-        cache_path=cache_path,
-        cache_max_age=int(args.cache_max_age),
-        log_lines=log_lines,
-    )
-    approved_set, alias_dict, hgnc_dict = build_hgnc_dictionaries(
-        docs=docs,
-        log_lines=log_lines,
-    )
+    #load hgnc data and build lookup dictionaries
+    docs = load_hgnc_data(cache_path=cache_path, cache_max_age=int(args.cache_max_age), log_lines=log_lines)
+    approved_set, alias_dict, hgnc_dict = build_hgnc_dictionaries(docs=docs, log_lines=log_lines)
 
-    df_out = apply_normalisation(
-        df_in=df_in,
-        approved_set=approved_set,
-        alias_dict=alias_dict,
-        hgnc_dict=hgnc_dict,
-    )
-
+    #normalise symbols, validate, and write outputs
+    df_out = apply_normalisation(df_in=df_in, approved_set=approved_set, alias_dict=alias_dict, hgnc_dict=hgnc_dict)
     run_validation(df_in=df_in, df_out=df_out)
 
     print(f"[HGNC] Writing output CSV: {output_path}")
     ensure_parent_dir(output_path)
-    ordered_cols = [
-        "gene",
-        "approved_symbol",
-        "hgnc_id",
-        "entrez_id",
-        "ensembl_gene_id",
-        "alias_symbols",
-        "prev_symbols",
-        "normalisation_status",
-    ]
+    ordered_cols = ["gene", "approved_symbol", "hgnc_id", "entrez_id", "ensembl_gene_id", "alias_symbols", "prev_symbols", "normalisation_status"]
     df_out = df_out[ordered_cols]
     df_out.to_csv(output_path, index=False)
 
     write_log(log_path=log_path, log_lines=log_lines, df_out=df_out)
-
     print("[HGNC] Done.")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
     except Exception as exc:  # noqa: BLE001
         print(f"[HGNC][error] {exc}", file=sys.stderr)
         raise

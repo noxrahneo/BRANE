@@ -131,7 +131,7 @@ def save_embedding_plots(
             continue
         current_legend_loc = legend_loc
         if obs_col == "SampleName":
-            # Keep sample legends below the panel to prevent right-margin width inflation.
+            #sample legends go below the panel to avoid right-margin width inflation
             current_legend_loc = "none"
         fig = plotter(
             adata,
@@ -188,6 +188,7 @@ def plot_condition(
     legend_loc: str,
     legend_fontsize: int,
 ) -> bool:
+    #locate integrated h5ad and verify umap exists
     condition_dir = root / condition
     integrated_file = find_integrated_file(condition_dir)
     if integrated_file is None:
@@ -199,34 +200,17 @@ def plot_condition(
         print(f"Skipping {condition}: X_umap missing")
         return False
 
+    #create output dir and save umap plots coloured by leiden and sample
     fig_dir = condition_dir / fig_subdir
     fig_dir.mkdir(parents=True, exist_ok=True)
     out_prefix = fig_dir / condition
+    save_embedding_plots(adata, sc.pl.umap, "UMAP", condition, out_prefix, dpi, legend_loc, legend_fontsize)
 
-    save_embedding_plots(
-        adata,
-        sc.pl.umap,
-        "UMAP",
-        condition,
-        out_prefix,
-        dpi,
-        legend_loc,
-        legend_fontsize,
-    )
-
+    #optionally compute and plot tsne
     if compute_tsne:
         if "X_tsne" not in adata.obsm:
             sc.tl.tsne(adata, use_rep="X_pca")
-        save_embedding_plots(
-            adata,
-            sc.pl.tsne,
-            "TSNE",
-            condition,
-            out_prefix,
-            dpi,
-            legend_loc,
-            legend_fontsize,
-        )
+        save_embedding_plots(adata, sc.pl.tsne, "TSNE", condition, out_prefix, dpi, legend_loc, legend_fontsize)
 
     print(f"[{condition}] saved figures in {fig_dir}")
     return True
@@ -234,8 +218,11 @@ def plot_condition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve input root
     root = resolve_base(args.input_dir)
 
+    #list available conditions and exit if requested
     if args.list_conditions:
         names = list_conditions(root)
         if not names:
@@ -246,6 +233,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions with fuzzy matching on failure
     try:
         targets = resolve_conditions(root, args.condition)
     except ValueError as exc:
@@ -256,19 +244,18 @@ def main() -> int:
         print(f"ERROR: No condition folders found in {root}")
         return 1
 
+    #plot each condition
     done = 0
     for condition in targets:
-        done += int(
-            plot_condition(
-                condition=condition,
-                root=root,
-                fig_subdir=args.fig_subdir,
-                dpi=args.dpi,
-                compute_tsne=args.compute_tsne,
-                legend_loc=args.legend_loc,
-                legend_fontsize=args.legend_fontsize,
-            )
-        )
+        done += int(plot_condition(
+            condition=condition,
+            root=root,
+            fig_subdir=args.fig_subdir,
+            dpi=args.dpi,
+            compute_tsne=args.compute_tsne,
+            legend_loc=args.legend_loc,
+            legend_fontsize=args.legend_fontsize,
+        ))
 
     if done == 0:
         print("ERROR: No figures were generated.")

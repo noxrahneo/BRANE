@@ -1,12 +1,5 @@
-#!/usr/bin/env python3
-"""Stage 28 - Threshold quantiles and FWER edge p-values.
+"""95th-percentile CSD/correlation thresholds and per-edge empirical FWER p-values from permutation maxima."""
 
-This script reads the stored permutation-maxima CSVs for the single-condition
-and differential network families, then derives the 95th-percentile threshold
-for each metric and per-edge empirical p-values from the maxima distribution.
-
-No permutation re-run is required. The raw maxima are already stored on disk.
-"""
 
 from __future__ import annotations
 

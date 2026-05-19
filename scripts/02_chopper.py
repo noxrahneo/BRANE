@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""02_chopper.py: filtering bogboss.csv to the core cohort for downstream analysis"""
+"""02_chopper.py: filtering bigboss.csv to the core cohort for downstream analysis"""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-import pandas as pd 
+import pandas as pd
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Filter bigboss.csv to the core cohort for downstream analysis.")
@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def apply_filters(df: pd.DataFrame, keep_source: str, keep_gender: str) -> pd.DataFrame:
-    #keep total-cell smaples only
+    #keep total-cell samples only
     out = df[df["Source"] == keep_source].copy()
     
     #keep female samples only
@@ -54,14 +54,17 @@ def print_summary(before: pd.DataFrame, after: pd.DataFrame) -> None:
 def main() -> int:
     args = parse_args()
 
+    #resolve paths relative to repo root
     repo_root = Path(__file__).resolve().parents[1]
     in_path = (repo_root / args.input).resolve()
     out_path = (repo_root / args.output).resolve()
 
+    #validate input exists
     if not in_path.exists():
         print(f"ERROR: input file not found: {in_path}")
         return 1
 
+    #load and filter
     df = pd.read_csv(in_path)
     chopped = apply_filters(df, keep_source=args.keep_source, keep_gender=args.keep_gender)
 
@@ -69,10 +72,10 @@ def main() -> int:
         print("ERROR: filtering produced 0 rows. Check filter values.")
         return 1
 
+    #save and report
     out_path.parent.mkdir(parents=True, exist_ok=True)
     chopped.to_csv(out_path, index=False)
-
-    print_summary(df, chopped)  
+    print_summary(df, chopped)
     print(f"\nSaved: {out_path}")
     return 0
 

@@ -1,26 +1,5 @@
-#!/usr/bin/env python3
-# flake8: noqa: E501
-"""Kaplan-Meier survival curves for hub genes targeted by drug candidates.
+"""KM curves for druggable hub genes with HR and FDR annotation."""
 
-For each drug-targetable hub gene with survival data, this script:
-  1. Stratifies TCGA-BRCA patients by gene expression (high vs low, median split)
-     in the subtype-matched cohort for that comparison pair.
-  2. Plots KM curves (DSS) annotated with the targeting drug(s),
-     HR, p-value, and FDR status.
-  3. Produces a prioritisation summary showing the most actionable gene–drug pairs.
-
-Interpretation note
--------------------
-These curves show gene expression as a PROGNOSTIC BIOMARKER, NOT a treatment outcome.
-High/low groups reflect tumour transcriptional state, not drug exposure.
-The drug annotation identifies agents known to target each gene — they represent
-hypothesis-generating leads for personalised therapy, requiring prospective validation.
-
-Usage
------
-  python scripts/53_drug_survival_km.py
-  python scripts/53_drug_survival_km.py --p-threshold 0.2   # include more exploratory genes
-"""
 
 from __future__ import annotations
 
@@ -72,7 +51,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _subtype_mask(clin: pd.DataFrame, filters: dict | None) -> pd.Series:
-    """Return boolean mask for subtype-matched patients."""
+    #return boolean mask for subtype-matched patients
     if filters is None:
         return pd.Series(True, index=clin.index)
     mask = pd.Series(True, index=clin.index)
@@ -89,7 +68,7 @@ def _subtype_mask(clin: pd.DataFrame, filters: dict | None) -> pd.Series:
 
 
 def _build_gene_drug_table(drug_dir: Path) -> pd.DataFrame:
-    """Return table of gene × drug × approval_status from ranked candidates."""
+    #return table of gene × drug × approval_status from ranked candidates
     ranked = pd.read_csv(drug_dir / "05_drug_candidates_ranked.csv")
     rows = []
     for _, r in ranked.iterrows():
@@ -120,7 +99,7 @@ def plot_km_with_drugs(
     direction_consistency: str,
     output_path: Path,
 ) -> None:
-    """Draw a single KM plot for one gene annotated with its drug candidates."""
+    #draw a single KM plot for one gene annotated with its drug candidates
     subtype_filter = PAIR_SUBTYPE_FILTERS.get(pair_name)
     mask = _subtype_mask(clin, subtype_filter)
     merged = clin[mask].copy()
@@ -159,14 +138,14 @@ def plot_km_with_drugs(
     kmf_high.plot_survival_function(ax=ax, color=COLOURS["high"], ci_show=True, ci_alpha=0.12)
     kmf_low.plot_survival_function(ax=ax, color=COLOURS["low"], ci_show=True, ci_alpha=0.12)
 
-    # At-risk table
+    #at-risk table
     try:
         from lifelines.plotting import add_at_risk_counts
         add_at_risk_counts(kmf_high, kmf_low, ax=ax, fontsize=9)
     except Exception:
         pass
 
-    # Build drug annotation text
+    #build drug annotation text
     approved_drugs = drug_rows[drug_rows["approved"]]["drug_name"].tolist()
     other_drugs = drug_rows[~drug_rows["approved"]]["drug_name"].tolist()
 
@@ -187,12 +166,12 @@ def plot_km_with_drugs(
         f"Direction: {deg_direction}  ({direction_consistency})"
     )
 
-    # Stats box (top right)
+    #stats box (top right)
     ax.text(0.98, 0.96, stats_text, transform=ax.transAxes,
             fontsize=9, va="top", ha="right",
             bbox={"facecolor": "#f8f9fa", "edgecolor": "#dee2e6", "alpha": 0.9, "pad": 6})
 
-    # Drug annotation box (bottom left)
+    #drug annotation box (bottom left)
     drug_box_text = "Targeting drugs:\n" + "\n".join(drug_lines)
     colour = APPROVED_BADGE_COLOUR if approved_drugs else UNAPPROVED_BADGE_COLOUR
     ax.text(0.02, 0.04, drug_box_text, transform=ax.transAxes,
@@ -209,7 +188,7 @@ def plot_km_with_drugs(
     ax.set_ylim(0, 1.05)
     ax.grid(axis="y", alpha=0.2)
 
-    # Interpretation note at very bottom
+    #interpretation note at very bottom
     note = ("Note: curves show gene expression as a prognostic biomarker. "
             "Drug annotation indicates known targeting agents — not treatment outcome data.")
     fig.text(0.5, -0.03, note, ha="center", fontsize=7.5, style="italic", color="#6c757d",
@@ -225,7 +204,7 @@ def plot_km_with_drugs(
 
 
 def plot_prioritisation_summary(summary_df: pd.DataFrame, output_path: Path, endpoint: str) -> None:
-    """One-page summary: forest plot of HR for all druggable genes, coloured by significance."""
+    #one-page summary: forest plot of HR for all druggable genes, coloured by significance
     if summary_df.empty:
         return
 
@@ -251,7 +230,7 @@ def plot_prioritisation_summary(summary_df: pd.DataFrame, output_path: Path, end
     ax.set_xscale("log")
     ax.grid(axis="x", alpha=0.2)
 
-    # Legend
+    #legend
     legend_els = [
         mpatches.Patch(color=HIGHLIGHT_COLOUR, label=f"FDR < {FDR_THRESHOLD}"),
         mpatches.Patch(color="#f39c12", label="p < 0.10 (nominal)"),
@@ -259,7 +238,7 @@ def plot_prioritisation_summary(summary_df: pd.DataFrame, output_path: Path, end
     ]
     ax.legend(handles=legend_els, loc="upper right", fontsize=9)
 
-    # Drug labels on right side
+    #drug labels on right side
     ax2 = ax.twinx()
     ax2.set_ylim(ax.get_ylim())
     ax2.set_yticks(range(n))
@@ -281,7 +260,7 @@ def run(args: argparse.Namespace) -> None:
     output_dir = Path(resolve_base(args.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load data
+    #load data
     expr = pd.read_parquet(survival_dir / "tcga_cache" / "tcga_brca_expression.parquet")
     clin = pd.read_parquet(survival_dir / "tcga_cache" / "tcga_brca_clinical.parquet")
     clin = clin.set_index("sample") if "sample" in clin.columns else clin
@@ -299,7 +278,7 @@ def run(args: argparse.Namespace) -> None:
     T_col = f"{endpoint}.time"
     E_col = endpoint
 
-    # Filter survival results to drug-targeted genes and chosen endpoint
+    #filter survival results to drug-targeted genes and chosen endpoint
     sub = surv[
         (surv["gene"].str.upper().isin(targeted_genes))
         & (surv["endpoint"] == endpoint)
@@ -336,7 +315,7 @@ def run(args: argparse.Namespace) -> None:
             "all_drugs": "|".join(drugs_for_gene["drug_name"].tolist()),
         })
 
-        # Only generate individual KM plots for genes below the p threshold
+        #only generate individual KM plots for genes below the p threshold
         if row["p_logrank"] <= args.p_threshold:
             plot_km_with_drugs(
                 gene=gene,
@@ -363,7 +342,7 @@ def run(args: argparse.Namespace) -> None:
 
     plot_prioritisation_summary(summary_df, output_dir, endpoint)
 
-    # Print prioritisation table
+    #print prioritisation table
     print(f"\n=== Druggable Hub Genes — {endpoint} Survival (sorted by p-value) ===\n")
     print(f"{'Gene':<12} {'p_logrank':>10} {'p_adj':>8} {'HR':>6}  {'Top drug':<35} {'Direction':<12} {'FDR sig'}")
     print("-" * 110)
@@ -373,11 +352,12 @@ def run(args: argparse.Namespace) -> None:
     print(f"\nIndividual KM plots (p < {args.p_threshold}) saved to: {output_dir}")
 
 
-def main() -> None:
+def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s", datefmt="%H:%M:%S")
     args = parse_args()
     run(args)
 
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

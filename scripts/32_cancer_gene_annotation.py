@@ -80,7 +80,7 @@ COSMIC_TABLE_SUFFIXES = (
 
 
 def score_cosmic_member_name(member_name: str) -> int:
-    """Heuristic score for selecting the real COSMIC census table file."""
+    #heuristic score for selecting the real COSMIC census table file
     name = member_name.lower()
     score = 0
     if "cancergenecensus" in name or "cancer_gene_census" in name:
@@ -95,7 +95,7 @@ def score_cosmic_member_name(member_name: str) -> int:
 
 
 def looks_like_cosmic_table(content: bytes) -> bool:
-    """Light validation to distinguish census table from prose docs."""
+    #light validation to distinguish census table from prose docs
     text = content.decode("utf-8", errors="replace")
     first_line = text.splitlines()[0].strip() if text.splitlines() else ""
     low = first_line.lower()
@@ -111,7 +111,7 @@ def looks_like_cosmic_table(content: bytes) -> bool:
 
 
 def has_required_cosmic_columns(columns: list[str]) -> bool:
-    """Return True if columns match known COSMIC CGC header variants."""
+    #return True if columns match known COSMIC CGC header variants
     cols = set(columns)
     human = {
         "Gene Symbol",
@@ -135,7 +135,7 @@ def has_required_cosmic_columns(columns: list[str]) -> bool:
 
 
 def is_parseable_cosmic_table(content: bytes) -> bool:
-    """Check if bytes decode into a COSMIC CGC table with known headers."""
+    #check if bytes decode into a COSMIC CGC table with known headers
     for sep in ("\t", ","):
         try:
             df_hdr = pd.read_csv(io.BytesIO(content), sep=sep, nrows=0)
@@ -147,11 +147,11 @@ def is_parseable_cosmic_table(content: bytes) -> bool:
 
 
 class ScriptError(RuntimeError):
-    """Raised for user-facing script failures."""
+    pass  #user-facing script failure with clean stderr message
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
+    #parse command-line arguments
     parser = argparse.ArgumentParser(description="Cancer gene annotation")
     parser.add_argument(
         "--input",
@@ -215,22 +215,22 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_path(path_text: str) -> Path:
-    """Resolve relative and user paths into absolute paths."""
+    #resolve relative and user paths into absolute paths
     return Path(path_text).expanduser().resolve()
 
 
 def ensure_parent_dir(path: Path) -> None:
-    """Create parent directories for a target path."""
+    #create parent directories for a target path
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def now_iso() -> str:
-    """Current UTC timestamp string."""
+    #current UTC timestamp string
     return datetime.now(timezone.utc).isoformat()
 
 
 def cache_is_fresh(path: Path, max_age_days: int) -> bool:
-    """Return True when cache exists and is not older than threshold."""
+    #return True when cache exists and is not older than threshold
     if not path.exists():
         return False
     mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
@@ -238,14 +238,14 @@ def cache_is_fresh(path: Path, max_age_days: int) -> bool:
 
 
 def normalize_symbol(symbol: Any) -> str:
-    """Normalize a gene symbol for stable matching."""
+    #normalize a gene symbol for stable matching
     if symbol is None:
         return ""
     return str(symbol).strip().upper()
 
 
 def must_get_cosmic_credentials() -> tuple[str, str]:
-    """Read COSMIC credentials from env, or prompt interactively."""
+    #read COSMIC credentials from env, or prompt interactively
     email = os.getenv("COSMIC_EMAIL", "").strip()
     password = os.getenv("COSMIC_PASSWORD", "").strip()
 
@@ -271,7 +271,7 @@ def must_get_cosmic_credentials() -> tuple[str, str]:
 
 
 def role_normalize_cosmic(role_raw: str) -> str:
-    """Normalize COSMIC role labels to controlled values."""
+    #normalize COSMIC role labels to controlled values
     role = role_raw.strip().lower()
     if role == "oncogene":
         return "oncogene"
@@ -285,7 +285,7 @@ def role_normalize_cosmic(role_raw: str) -> str:
 
 
 def role_from_oncokb(is_oncogene: bool, is_tsg: bool) -> str:
-    """Derive role from OncoKB binary flags."""
+    #derive role from OncoKB binary flags
     if is_oncogene and is_tsg:
         return "oncogene, TSG"
     if is_oncogene:
@@ -296,7 +296,7 @@ def role_from_oncokb(is_oncogene: bool, is_tsg: bool) -> str:
 
 
 def cancer_role_from_source(source_role: str) -> str:
-    """Map source role into final cancer_role taxonomy."""
+    #map source role into final cancer_role taxonomy
     role = source_role.strip().lower()
     if role == "oncogene":
         return "oncogene"
@@ -312,13 +312,13 @@ def cancer_role_from_source(source_role: str) -> str:
 
 
 def parse_bool_like(value: Any) -> bool:
-    """Parse bool-like values used in TSV files."""
+    #parse bool-like values used in TSV files
     text = str(value).strip().lower()
     return text in {"true", "1", "yes", "y"}
 
 
 def download_cosmic_tsv(cosmic_cache: Path, log_lines: list[str]) -> Path:
-    """Authenticate with COSMIC, download tar, extract and cache TSV."""
+    #authenticate with COSMIC, download tar, extract and cache TSV
     email, password = must_get_cosmic_credentials()
 
     credentials = f"{email}:{password}".encode("utf-8")
@@ -452,7 +452,7 @@ def load_cosmic(
     cosmic_cache: Path,
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, dict[str, Any]]]:
-    """Load COSMIC cache (or download first), then parse lookup structures."""
+    #load COSMIC cache (or download first), then parse lookup structures
     if cosmic_cache.exists():
         cache_bytes = cosmic_cache.read_bytes()
         if is_parseable_cosmic_table(cache_bytes):
@@ -539,7 +539,7 @@ def load_cosmic(
 
 
 def fetch_oncokb(oncokb_cache: Path) -> None:
-    """Fetch OncoKB cancerGeneList and save to cache file."""
+    #fetch OncoKB cancerGeneList and save to cache file
     try:
         response = requests.get(ONCOKB_URL, timeout=60)
     except Exception as exc:  # noqa: BLE001
@@ -559,7 +559,7 @@ def load_oncokb(
     cache_max_age: int,
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, dict[str, Any]]]:
-    """Load or fetch OncoKB and parse lookup structures."""
+    #load or fetch OncoKB and parse lookup structures
     if cache_is_fresh(oncokb_cache, cache_max_age):
         log_lines.append("Using cached OncoKB file")
     else:
@@ -595,7 +595,7 @@ def load_oncokb(
                 "oncokb_role": role_from_oncokb(is_oncogene, is_tsg),
             }
     else:
-        # Newer endpoint format: uses "Hugo Symbol" + "Gene Type".
+        #newer endpoint format: uses "Hugo Symbol" + "Gene Type".
         if "Hugo Symbol" in df.columns and "Gene Type" in df.columns:
             df2 = df
         else:
@@ -642,7 +642,7 @@ def load_oncokb(
 
 
 def fetch_open_targets_all() -> list[dict[str, Any]]:
-    """Fetch all breast cancer associated targets via paginated GraphQL."""
+    #fetch all breast cancer associated targets via paginated GraphQL
     query = """
     query AssociatedTargets($efoId: String!, $index: Int!, $size: Int!) {
       disease(efoId: $efoId) {
@@ -732,7 +732,7 @@ def load_open_targets(
     cache_max_age: int,
     log_lines: list[str],
 ) -> dict[str, float]:
-    """Load or fetch Open Targets and create symbol->score map."""
+    #load or fetch Open Targets and create symbol->score map
     if cache_is_fresh(ot_cache, cache_max_age):
         log_lines.append("Using cached Open Targets data")
         try:
@@ -787,7 +787,7 @@ def load_open_targets(
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
-    """Convert value to float safely, returning default on failure."""
+    #convert value to float safely, returning default on failure
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -795,7 +795,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def map_intogen_role(role_raw: str) -> str:
-    """Map IntOGen role values to script role labels."""
+    #map IntOGen role values to script role labels
     role = str(role_raw).strip()
     if role == "Act":
         return "oncogene"
@@ -810,7 +810,7 @@ def load_intogen(
     intogen_cache: Path,
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, dict[str, Any]], dict[str, int]]:
-    """Load IntOGen drivers from cache or API and build lookup maps."""
+    #load IntOGen drivers from cache or API and build lookup maps
     print("[IntOGen] Loading...")
     if intogen_cache.exists():
         log_lines.append("Using cached IntOGen file")
@@ -911,10 +911,7 @@ def load_oncovar_brca_genes(
     oncovar_cache: Path | None,
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, dict[str, Any]]]:
-    """
-    Load OncoVar BRCA oncogenic driver gene files (optional).
-    If cache_path is None or file doesn't exist, silently returns empty data.
-    """
+    #load oncovar brca oncogenic driver gene files; returns empty data if cache missing
     if oncovar_cache is None or not oncovar_cache.exists():
         return set(), {}
 
@@ -927,7 +924,7 @@ def load_oncovar_brca_genes(
         log_lines.append(f"[OncoVar] Could not read cache file: {exc}")
         return set(), {}
 
-    # Normalize column names — OncoVar TSV columns vary
+    #normalize column names — OncoVar TSV columns vary
     df.columns = [c.strip() for c in df.columns]
     col_map = {}
     for col in df.columns:
@@ -954,7 +951,7 @@ def load_oncovar_brca_genes(
         if not raw_sym or raw_sym == "nan":
             continue
 
-        # Use raw symbol; will be normalized during per-gene matching
+        #use raw symbol; will be normalized during per-gene matching
         approved = raw_sym
 
         score = row.get("oncovar_score", None)
@@ -967,11 +964,11 @@ def load_oncovar_brca_genes(
         role = str(row.get("cancer_role", "unknown")).strip().lower()
         src = str(row.get("oncovar_source", "Local")).strip()
 
-        # Only keep Level 4 genes (high-confidence) if filtering requested
+        #only keep Level 4 genes (high-confidence) if filtering requested
         if "level4" not in level.lower() and "4" not in level and level not in ("nan", ""):
             continue
 
-        # Only keep if not already present with higher-confidence source, or merge
+        #only keep if not already present with higher-confidence source, or merge
         if approved not in result:
             result[approved] = {
                 "oncovar_score": score,
@@ -980,13 +977,13 @@ def load_oncovar_brca_genes(
                 "oncovar_sources": {src},
             }
         else:
-            # Merge sources; keep max score
+            #merge sources; keep max score
             result[approved]["oncovar_sources"].add(src)
             if score is not None and (result[approved]["oncovar_score"] is None
                                        or float(score) > float(result[approved]["oncovar_score"] or 0)):
                 result[approved]["oncovar_score"] = score
 
-    # Convert sets to sorted strings for serialization
+    #convert sets to sorted strings for serialization
     for sym in result:
         result[sym]["oncovar_sources"] = ";".join(sorted(result[sym]["oncovar_sources"]))
 
@@ -1000,7 +997,7 @@ def resolve_hgnc_symbol(
     alias_dict: dict[str, str],
     approved_set: set[str],
 ) -> str:
-    """Resolve a symbol to approved HGNC, keeping unresolved symbols as-is."""
+    #resolve a symbol to approved HGNC, keeping unresolved symbols as-is
     sym = normalize_symbol(symbol)
     if not sym:
         return ""
@@ -1015,7 +1012,7 @@ def resolve_hgnc_symbol(
 def build_alias_and_approved_from_df(
     df: pd.DataFrame,
 ) -> tuple[dict[str, str], set[str]]:
-    """Build alias->approved map and approved HGNC symbol set from input table."""
+    #build alias->approved map and approved HGNC symbol set from input table
     alias_dict: dict[str, str] = {}
     approved_set: set[str] = set()
 
@@ -1051,8 +1048,8 @@ def load_oncovar_local_gene_sets(
     approved_set: set[str],
     log_lines: list[str],
 ) -> tuple[set[str], set[str]]:
-    """Load local OncoVar BRCA/PanCancer files and return approved symbol sets."""
-    # --- NEW: OncoVar ---
+    #load local OncoVar BRCA/PanCancer files and return approved symbol sets
+    #oncovar
     try:
         df_brca = pd.read_csv(brca_path, sep="\t", compression="gzip", dtype=str)
     except FileNotFoundError as exc:
@@ -1127,8 +1124,8 @@ def load_oncovar_local_gene_sets(
 
 
 def download_ncg_reference(ncg_path: Path) -> None:
-    """Download NCG gene table and cache locally."""
-    # The legacy direct URL now redirects to HTML; use form download endpoint.
+    #download NCG gene table and cache locally
+    #the legacy direct URL now redirects to HTML; use form download endpoint.
     response = requests.post(
         NCG_DOWNLOAD_PAGE_URL,
         data={"downloadcancergenes": "Download"},
@@ -1154,8 +1151,8 @@ def load_ncg_gene_set(
     approved_set: set[str],
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, str]]:
-    """Load NCG symbols and optional role labels."""
-    # --- NEW: NCG ---
+    #load NCG symbols and optional role labels
+    #ncg
     if not ncg_path.exists():
         try:
             download_ncg_reference(ncg_path)
@@ -1248,7 +1245,7 @@ def load_ncg_gene_set(
 
 
 def download_omim_genemap2(omim_path: Path, api_key: str) -> None:
-    """Download OMIM genemap2 using OMIM API key."""
+    #download OMIM genemap2 using OMIM API key
     url = OMIM_GENEMAP2_URL_TEMPLATE.format(api_key=api_key)
     response = requests.get(url, timeout=120)
     if response.status_code != 200:
@@ -1264,8 +1261,8 @@ def load_omim_cancer_mim_set(
     omim_path: Path,
     log_lines: list[str],
 ) -> set[str]:
-    """Parse OMIM genemap2 and collect cancer phenotype MIM IDs."""
-    # --- NEW: OMIM ---
+    #parse OMIM genemap2 and collect cancer phenotype MIM IDs
+    #omim
     lines = omim_path.read_text(
         encoding="utf-8",
         errors="replace",
@@ -1337,7 +1334,7 @@ def load_omim_cancer_mim_set(
 
 
 def map_cancermine_role(role_raw: str) -> str:
-    """Map CancerMine role labels to script role labels."""
+    #map CancerMine role labels to script role labels
     role = str(role_raw).strip().lower()
     if role == "oncogene":
         return "oncogene"
@@ -1354,7 +1351,7 @@ def load_cancermine(
     min_citations: int,
     log_lines: list[str],
 ) -> tuple[set[str], dict[str, dict[str, Any]], dict[str, int]]:
-    """Load CancerMine collated table with citation and role aggregation."""
+    #load CancerMine collated table with citation and role aggregation
     print("[CancerMine] Loading...")
     if cache_is_fresh(cancermine_cache, cache_max_age):
         log_lines.append("Using cached CancerMine file")
@@ -1466,7 +1463,7 @@ def load_cancermine(
 
 
 def extract_uniprot_next_link(link_header: str) -> str | None:
-    """Extract next-page URL from UniProt Link header."""
+    #extract next-page URL from UniProt Link header
     if not link_header:
         return None
     match = re.search(r"<([^>]+)>;\s*rel=\"next\"", link_header)
@@ -1476,7 +1473,7 @@ def extract_uniprot_next_link(link_header: str) -> str | None:
 
 
 def fetch_uniprot_keyword_symbols(keyword_id: str, label: str) -> set[str]:
-    """Fetch UniProt reviewed human symbols for one cancer keyword."""
+    #fetch UniProt reviewed human symbols for one cancer keyword
     print(f"[UniProt] Fetching {label}...")
     symbols: set[str] = set()
     params = {
@@ -1526,7 +1523,7 @@ def load_uniprot(
     cache_max_age: int,
     log_lines: list[str],
 ) -> tuple[set[str], set[str], dict[str, dict[str, Any]]]:
-    """Load UniProt oncogene/TSG keyword sets from cache or API."""
+    #load UniProt oncogene/TSG keyword sets from cache or API
     print("[UniProt] Loading...")
     if cache_is_fresh(uniprot_cache, cache_max_age):
         log_lines.append("Using cached UniProt data")
@@ -1592,14 +1589,14 @@ def load_uniprot(
 
 
 def pct(count: int, total: int) -> str:
-    """Format percent with one decimal place."""
+    #format percent with one decimal place
     if total <= 0:
         return "0.0%"
     return f"{(100.0 * count / total):.1f}%"
 
 
 def build_summary_table(rows: list[tuple[str, int, str]]) -> str:
-    """Build all-sources boxed summary table with count and percentage."""
+    #build all-sources boxed summary table with count and percentage
     col1 = "Source"
     col2 = "Genes"
     col3 = "% of network"
@@ -1636,8 +1633,8 @@ def build_summary_table(rows: list[tuple[str, int, str]]) -> str:
     return "\n".join(out)
 
 
-def main() -> None:
-    """Run cancer evidence annotation workflow."""
+def main() -> int:
+    #run cancer evidence annotation workflow
     args = parse_args()
 
     input_path = resolve_path(args.input)
@@ -1731,7 +1728,7 @@ def main() -> None:
         log_lines.append(f"WARNING: IntOGen unavailable: {exc}")
         print(f"[IntOGen] WARNING: {exc}")
 
-    # --- NEW: OncoVar ---
+    #oncovar
     oncovar_brca_path = resolve_path(
         "data/references/TCGA.BRCA.onco.genes.OncoVar.tsv.gz"
     )
@@ -1753,7 +1750,7 @@ def main() -> None:
         log_lines.append(f"WARNING: OncoVar unavailable: {exc}")
         print(f"[OncoVar] WARNING: {exc}")
 
-    # --- NEW: NCG ---
+    #ncg
     ncg_path = resolve_path("data/references/NCG_cancergenes.tsv")
     try:
         ncg_gene_set, ncg_role_data = load_ncg_gene_set(
@@ -1766,7 +1763,7 @@ def main() -> None:
         log_lines.append(f"WARNING: NCG unavailable: {exc}")
         print(f"[NCG] WARNING: {exc}")
 
-    # --- NEW: OMIM ---
+    #omim
     omim_genemap_path = resolve_path("data/references/omim_genemap2.txt")
     try:
         omim_api_key = os.getenv("OMIM_API_KEY", "").strip()
@@ -1879,7 +1876,7 @@ def main() -> None:
 
         tier1 = 1 if cosmic_match else 0
         intogen_driver = 1 if intogen_match else 0
-        # --- NEW: OncoVar ---
+        #oncovar
         oncovar_brca_gene = 1 if oncovar_brca_match else 0
         oncovar_pancancer_gene = 1 if oncovar_pancancer_match else 0
         tier2 = 1 if oncokb_match else 0
@@ -1983,7 +1980,7 @@ def main() -> None:
                 source_role_for_final = intogen_role
 
         if oncovar_brca_match or oncovar_pancancer_match:
-            # --- NEW: OncoVar ---
+            #oncovar
             oncovar_level = (
                 "BRCA"
                 if oncovar_brca_match
@@ -2025,7 +2022,7 @@ def main() -> None:
             if not source_role_for_final:
                 source_role_for_final = uniprot_role
 
-        # Keep hierarchy output stable.
+        #keep hierarchy output stable.
         if evidence_tier == "Tier2_OncoKB":
             tier2_matches.add(approved_sym)
         if evidence_tier == "Tier3_CancerMine":
@@ -2148,7 +2145,7 @@ def main() -> None:
 
     out_df = out_df[expected_cols]
 
-    # Validation checks.
+    #validation checks.
     if len(out_df) != len(df):
         raise ScriptError(
             "Validation failed: output row count differs from input."
@@ -2374,11 +2371,12 @@ def main() -> None:
     print(f"increase: {n_increase} ({p_increase:.1f}%)")
     print(f"Wrote output CSV: {output_path}")
     print(f"Wrote log file: {log_path}")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
     except ScriptError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)

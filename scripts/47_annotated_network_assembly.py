@@ -1,28 +1,5 @@
-#!/usr/bin/env python3
-"""
-47_annotated_network_assembly.py
+"""Earlier annotated network assembly; superseded by script 36."""
 
-Consolidated assembly of fully-annotated network outputs for 20_node_annotation.
-
-For each condition pair this script produces:
-  {pair}_nodes.csv              — merged node table: network structure + all annotation layers
-  {pair}_hubs_D.csv             — Tier I hubs: top 50 by degree in D subnetwork (rewired)
-  {pair}_hubs_S_case.csv        — Tier II hubs: top 50 by degree in tumour-gained S subnetwork
-  {pair}_hubs_S_ctrl.csv        — Tier III hubs: top 50 by degree in normal-lost S subnetwork
-  {pair}_hubs_overall.csv       — top 50 by overall weighted degree (reference)
-  {pair}_modules.csv            — module membership with annotation summary per module
-  {pair}_network_annotated.html — PyVis interactive HTML (module fill, cell-type border,
-                                   cancer markers ★/▼, LFC direction)
-  stable_pngs/                  — annotated static PNGs
-
-INPUTS (all from existing pipeline outputs):
-  results/14_csd_networks/{pair}/   — edges, modules, hubs, homogeneity, summary
-  results/20_node_annotation/zzz_03_output_with_lfc/{pair}_tagged_with_lfc.csv
-  results/16_network_viz/{pair}/    — existing static PNGs (copied as base)
-
-OUTPUT ROOT:
-  results/20_node_annotation/{pair}/
-"""
 
 from __future__ import annotations
 
@@ -89,7 +66,7 @@ MODULE_PALETTE = [
     "#C0C0C0","#B5EAD7","#FF6961","#AEC6CF","#FDFD96",
 ]
 
-# Edge colours matching 16_network_viz style
+#edge colours matching 16_network_viz style
 EDGE_COLORS = {"C": "#2b6fb0", "S": "#2a9d8f", "D": "#e63946"}
 
 def module_colour(mod_id: int | float | str) -> str:
@@ -104,7 +81,7 @@ def cell_type_colour(ct: str | float) -> str:
     return CELL_TYPE_COLOURS.get(str(ct), "#AAAAAA")
 
 def cancer_label(row: pd.Series, gene_name: str | None = None) -> str:
-    """Build label with cancer marker. If row doesn't have 'gene' column, use gene_name param."""
+    #build label with cancer marker. If row doesn't have 'gene' column, use gene_name param
     if gene_name is None:
         gene_name = str(row.get("approved_symbol", row.get("gene", "GENE")))
     else:
@@ -127,26 +104,26 @@ def lfc_suffix(direction: str | float) -> str:
 # ── data loading ───────────────────────────────────────────────────────────────
 
 def load_pair_data(pair: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (nodes_df, edges_df) with all layers merged."""
+    #return (nodes_df, edges_df) with all layers merged
     net = NET_DIR / pair
 
-    # Network structure
+    #network structure
     hom  = pd.read_csv(net / f"{pair}_node_homogeneity_permutation.csv")
     edges = pd.read_csv(net / f"{pair}_differential_edges_permutation.csv")
 
-    # Annotation (tagged_with_lfc)
+    #annotation (tagged_with_lfc)
     lfc_path = LFC_DIR / f"{pair}_tagged_with_lfc.csv"
     if lfc_path.exists():
         ann = pd.read_csv(lfc_path)
     else:
         ann = pd.DataFrame({"gene": list(set(edges["gene_a"]) | set(edges["gene_b"]))})
 
-    # Merge: homogeneity has degree/module/etc; annotation has HGNC/cancer/cell-type/LFC
+    #merge: homogeneity has degree/module/etc; annotation has HGNC/cancer/cell-type/LFC
     nodes = hom.merge(ann, on="gene", how="left")
     return nodes, edges
 
 def compute_tier_hubs(edges: pd.DataFrame, nodes: pd.DataFrame, top_n: int = TOP_N_HUBS) -> dict[str, pd.DataFrame]:
-    """Compute per-tier hub rankings from edge file."""
+    #compute per-tier hub rankings from edge file
     def degree_rank(sub_edges: pd.DataFrame) -> pd.DataFrame:
         from collections import Counter
         counts = Counter()
@@ -166,7 +143,7 @@ def compute_tier_hubs(edges: pd.DataFrame, nodes: pd.DataFrame, top_n: int = TOP
     d_edges  = edges[edges["link_type"] == "D"]
     s_edges  = edges[edges["link_type"] == "S"]
 
-    # Split S into case-gained (rho_case > rho_control) and ctrl-gained (rho_control > rho_case)
+    #split S into case-gained (rho_case > rho_control) and ctrl-gained (rho_control > rho_case)
     s_case = s_edges[s_edges["rho_case"] >= s_edges["rho_control"]]
     s_ctrl = s_edges[s_edges["rho_control"] > s_edges["rho_case"]]
 
@@ -177,7 +154,7 @@ def compute_tier_hubs(edges: pd.DataFrame, nodes: pd.DataFrame, top_n: int = TOP
     }
 
 def compute_module_summary(nodes: pd.DataFrame) -> pd.DataFrame:
-    """Module-level summary: size, top genes, cancer gene count, dominant cell type."""
+    #module-level summary: size, top genes, cancer gene count, dominant cell type
     rows = []
     for mod_id, grp in nodes.groupby("module"):
         known_cancer = int(grp["known_cancer_gene"].sum()) if "known_cancer_gene" in grp.columns else 0
@@ -199,7 +176,7 @@ def compute_module_summary(nodes: pd.DataFrame) -> pd.DataFrame:
 # ── community layout (matching 32_csd_visualization.py) ───────────────────────
 
 def _community_layout(g: nx.Graph, node_to_module: dict, seed: int = SEED) -> dict:
-    """Communities arranged via spring layout on contracted meta-graph; spring within each."""
+    #communities arranged via spring layout on contracted meta-graph; spring within each
     buckets: dict[int, list] = {}
     for node, mod in node_to_module.items():
         if node in g:
@@ -263,8 +240,7 @@ def _degree_scaled_sizes(g: nx.Graph, lo: float = 20.0, hi: float = 180.0) -> di
 # ── interactive HTML ───────────────────────────────────────────────────────────
 
 def build_interactive_html(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_path: Path) -> None:
-    """Generate PyVis HTML: module fill, cell-type border, cancer markers, LFC arrow.
-    Light theme matching 16_network_viz; physics control panel shown."""
+    #generate pyvis html with module fill, cell-type border, cancer markers, and LFC arrow
     try:
         from pyvis.network import Network
     except ImportError:
@@ -333,15 +309,7 @@ MIN_MODULE_DISPLAY = 15   # hide modules smaller than this in full network
 TOP_LABEL_N = 20          # hub genes labelled in full network
 
 def build_stable_pngs(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_dir: Path) -> None:
-    """Full network + per-tier PNGs.
-
-    Style matches 16_network_viz (light background, community layout, CSD edge colours)
-    with added annotation layers: cell-type border, cancer marker labels (★/▼), LFC direction (↑↓).
-    
-    Figure sizes:
-      - Full network: 28×26 (large, comprehensive view)
-      - Tier panels: 22×20 (medium, focused subnetwork)
-    """
+    #generate full network and per-tier PNG figures
     out_dir.mkdir(parents=True, exist_ok=True)
     node_map = nodes.set_index("gene")
 
@@ -360,11 +328,11 @@ def build_stable_pngs(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_d
         if G.number_of_nodes() == 0:
             return
 
-        # Module membership for layout
+        #module membership for layout
         mod_map = {n: int(node_map.loc[n, "module"]) if n in node_map.index else 0
                    for n in G.nodes()}
 
-        # For full network, hide tiny modules (matching 16_network_viz)
+        #for full network, hide tiny modules (matching 16_network_viz)
         if fname.endswith("full_annotated.png"):
             mod_sizes: dict[int, int] = {}
             for m in mod_map.values():
@@ -388,14 +356,14 @@ def build_stable_pngs(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_d
         fig, ax = plt.subplots(figsize=figsize, facecolor="#fafafa")
         ax.set_facecolor("#fafafa")
 
-        # Edges coloured by CSD type
+        #edges coloured by CSD type
         for lt, ec in EDGE_COLORS.items():
             elist = [(u, v) for u, v, d in G.edges(data=True) if d.get("link_type") == lt]
             if elist:
                 nx.draw_networkx_edges(G, pos, edgelist=elist, ax=ax,
                                        edge_color=ec, alpha=0.22, width=0.5)
 
-        # Nodes: module fill, cell-type border
+        #nodes: module fill, cell-type border
         fills   = [module_colour(mod_map.get(n, 0)) for n in node_list]
         borders = [cell_type_colour(node_map.loc[n, "cell_type"] if n in node_map.index else None)
                    for n in node_list]
@@ -405,7 +373,7 @@ def build_stable_pngs(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_d
                                node_color=fills, edgecolors=borders,
                                node_size=sz, linewidths=2.5, alpha=0.90)
 
-        # Hub gene labels with cancer/LFC annotations — dark text matching 16_network_viz
+        #hub gene labels with cancer/LFC annotations — dark text matching 16_network_viz
         dw = dict(G.degree(weight="weight"))
         hubs = sorted(dw, key=lambda x: dw[x], reverse=True)[:n_top_label]
         
@@ -422,7 +390,7 @@ def build_stable_pngs(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_d
                                 ax=ax, font_size=5.5, font_color="#1d3557",
                                 font_weight="bold")
 
-        # Legends
+        #legends
         edge_patches = [mpatches.Patch(color=c, label=f"{t} — {'Conserved' if t=='C' else 'Specific' if t=='S' else 'Differentiated'}")
                         for t, c in EDGE_COLORS.items()]
         present_cts = set(node_map["cell_type"].dropna().unique()) if "cell_type" in node_map.columns else set()
@@ -451,11 +419,11 @@ def build_stable_pngs(pair: str, nodes: pd.DataFrame, edges: pd.DataFrame, out_d
         plt.close(fig)
         logging.info("  PNG → %s", fname)
 
-    # Full network (all edges, filtered to large modules) — larger figure size, top 20 labels
+    #full network (all edges, filtered to large modules) — larger figure size, top 20 labels
     draw_network(edges, "Full annotated network (all tiers)", f"{pair}_full_annotated.png",
                  n_top_label=20, figsize=(28, 26))
 
-    # Per-tier subnetworks — smaller figure size, top 8 labels
+    #per-tier subnetworks — smaller figure size, top 8 labels
     for lt, label, fname_suffix in [
         ("D", "Tier I — Rewired co-expression (D edges)",       "tier_D"),
         ("S", "Tier II/III — Condition-specific (S edges)",     "tier_S"),
@@ -475,7 +443,7 @@ def process_pair(pair: str) -> None:
     out_dir = OUT_ROOT / pair
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load and merge
+    #load and merge
     nodes, edges = load_pair_data(pair)
     logging.info("  Nodes: %d   Edges: %d", len(nodes), len(edges))
 
@@ -491,7 +459,7 @@ def process_pair(pair: str) -> None:
         df.to_csv(p, index=False)
         logging.info("  hubs_%s.csv → %d genes", tier, len(df))
 
-    # Overall hubs (from pre-computed file)
+    #overall hubs (from pre-computed file)
     overall_hubs_src = NET_DIR / pair / f"{pair}_top_hubs_permutation.csv"
     if overall_hubs_src.exists():
         import shutil
@@ -512,7 +480,7 @@ def process_pair(pair: str) -> None:
     logging.info("  Done: %s", pair)
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Annotated network assembly for 20_node_annotation")
     parser.add_argument("--pairs", nargs="*", default=PAIRS, help="Pairs to process (default: all)")
     parser.add_argument("--skip-html", action="store_true", help="Skip interactive HTML generation")
@@ -537,6 +505,7 @@ def main() -> None:
     logging.info("=" * 60)
     logging.info("All pairs complete in %.1fs", elapsed)
 
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

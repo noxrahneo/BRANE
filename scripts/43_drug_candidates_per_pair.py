@@ -1,19 +1,5 @@
-#!/usr/bin/env python3
-"""
-Per-pair/per-condition analysis of drug candidates.
+"""Per-network drug candidate rankings and summary tables."""
 
-Generates:
-1. Per-pair top drug rankings
-2. Per-pair network diagrams
-3. Per-pair heatmaps
-4. Summary CSV tables
-
-Usage:
-  python 52_drug_candidates_per_pair.py \
-    --input-dir results/24_drug_targets \
-    --pair-dirs results/19_persistent_overlap \
-    --output-dir results/24_drug_targets/per_pair_analysis
-"""
 
 import argparse
 import json
@@ -28,21 +14,21 @@ import seaborn as sns
 from matplotlib.gridspec import GridSpec
 import networkx as nx
 
-# Set style
+#set style
 sns.set_style("whitegrid")
 plt.rcParams["figure.figsize"] = (16, 12)
 plt.rcParams["font.size"] = 10
 
 
 def get_pair_names(pair_dirs):
-    """Extract pair names from directory structure."""
+    #extract pair names from directory structure
     pair_path = Path(pair_dirs)
     pair_folders = sorted([d.name for d in pair_path.iterdir() if d.is_dir() and d.name.startswith("pair_")])
     return pair_folders
 
 
 def load_interactions_file(input_dir):
-    """Load interactions file to get drug-gene-pair mappings."""
+    #load interactions file to get drug-gene-pair mappings
     interactions_file = Path(input_dir) / "03_hub_gene_drug_interactions_raw.csv"
     if not interactions_file.exists():
         return None
@@ -50,20 +36,20 @@ def load_interactions_file(input_dir):
 
 
 def get_drugs_per_pair(candidates_df, interactions_df, pair_name):
-    """Get drugs and their scores for a specific pair."""
+    #get drugs and their scores for a specific pair
     if interactions_df is None:
         return None
     
-    # Filter interactions for this pair - check if pair_name is in the hub_pairs string
+    #filter interactions for this pair - check if pair_name is in the hub_pairs string
     pair_interactions = interactions_df[interactions_df["hub_pairs"].str.contains(pair_name, na=False)]
     
     if len(pair_interactions) == 0:
         return None
     
-    # Get unique drugs in this pair
+    #get unique drugs in this pair
     pair_drugs = pair_interactions["drug_name"].unique()
     
-    # Filter candidates to only those in this pair
+    #filter candidates to only those in this pair
     pair_candidates = candidates_df[candidates_df["canonical_drug_name"].isin(pair_drugs)].copy()
     
     if len(pair_candidates) == 0:
@@ -73,7 +59,7 @@ def get_drugs_per_pair(candidates_df, interactions_df, pair_name):
 
 
 def plot_per_pair_top_drugs(candidates_df, interactions_df, pair_names, output_path, top_n=10):
-    """Create figure showing top drugs for each pair."""
+    #create figure showing top drugs for each pair
     n_pairs = len(pair_names)
     
     fig = plt.figure(figsize=(18, 3 * n_pairs))
@@ -93,7 +79,7 @@ def plot_per_pair_top_drugs(candidates_df, interactions_df, pair_names, output_p
         
         pair_drug_data[pair_name] = pair_candidates
         
-        # Top N drugs for this pair
+        #top N drugs for this pair
         top_pair = pair_candidates.head(top_n).copy()
         top_pair = top_pair.sort_values("candidate_score", ascending=True)
         
@@ -106,7 +92,7 @@ def plot_per_pair_top_drugs(candidates_df, interactions_df, pair_names, output_p
         ax.set_title(f"{pair_name} — Top {min(top_n, len(pair_candidates))} Drug Candidates", fontweight="bold", fontsize=11)
         ax.grid(axis="x", alpha=0.3)
         
-        # Add score labels
+        #add score labels
         for i, (idx_row, row) in enumerate(top_pair.iterrows()):
             ax.text(row["candidate_score"] + 0.5, i, f"{row['candidate_score']:.1f}", va="center", fontsize=8)
     
@@ -147,7 +133,7 @@ def _bipartite_positions(G, left_nodes, right_nodes, left_x=-1.3, right_x=1.3, y
 
 
 def _draw_pair_network(ax, G, pair_candidates, pair_name, label_size=6):
-    """Render one pair network using a readable bipartite layout."""
+    #render one pair network using a readable bipartite layout
     drug_nodes = [n for n in G.nodes() if n in pair_candidates["canonical_drug_name"].values]
     gene_nodes = [n for n in G.nodes() if n not in drug_nodes]
 
@@ -230,11 +216,11 @@ def _draw_pair_network(ax, G, pair_candidates, pair_name, label_size=6):
 
 
 def plot_per_pair_networks(candidates_df, interactions_df, pair_names, output_path):
-    """Create network diagrams for each pair with readable bipartite layout."""
+    #create network diagrams for each pair with readable bipartite layout
     n_pairs = len(pair_names)
 
-    # Keep each panel large enough for readable labels.
-    # Height per row scales with the number of drugs in the largest pair (cap at 15).
+    #keep each panel large enough for readable labels.
+    #height per row scales with the number of drugs in the largest pair (cap at 15).
     MAX_DRUGS_PER_PAIR = 15
     def _n_pair_drugs(p):
         df = get_drugs_per_pair(candidates_df, interactions_df, p)
@@ -262,10 +248,10 @@ def plot_per_pair_networks(candidates_df, interactions_df, pair_names, output_pa
             ax.axis("off")
             continue
         
-        # Build network for this pair
+        #build network for this pair
         G = nx.Graph()
         
-        # Add nodes and edges
+        #add nodes and edges
         for _, drug_row in pair_candidates.iterrows():
             drug_name = drug_row["canonical_drug_name"]
             hub_genes_str = drug_row.get("targeted_hub_genes", "")
@@ -283,7 +269,7 @@ def plot_per_pair_networks(candidates_df, interactions_df, pair_names, output_pa
         
         _draw_pair_network(ax, G, pair_candidates, pair_name, label_size=6)
 
-        # Save full-size per-pair image as well.
+        #save full-size per-pair image as well.
         n_drug_nodes = len([n for n in G.nodes() if n in pair_candidates["canonical_drug_name"].values])
         single_height = max(12, n_drug_nodes * 0.6)
         single_fig, single_ax = plt.subplots(figsize=(24, single_height))
@@ -301,11 +287,11 @@ def plot_per_pair_networks(candidates_df, interactions_df, pair_names, output_pa
 
 
 def plot_drug_scores_across_pairs(candidates_df, interactions_df, pair_names, output_path, top_n=15):
-    """Heatmap showing drug scores across all pairs."""
-    # Get top global drugs
+    #heatmap showing drug scores across all pairs
+    #get top global drugs
     top_global = candidates_df.head(top_n).copy()
     
-    # Build matrix: drugs × pairs
+    #build matrix: drugs × pairs
     matrix_data = []
     drugs = []
     
@@ -315,12 +301,12 @@ def plot_drug_scores_across_pairs(candidates_df, interactions_df, pair_names, ou
         pair_scores = []
         
         for pair_name in pair_names:
-            # Find interactions for this drug in this pair
+            #find interactions for this drug in this pair
             pair_interactions = interactions_df[interactions_df["hub_pairs"].str.contains(pair_name, na=False)]
             pair_drug_interactions = pair_interactions[pair_interactions["drug_name"] == drug_name]
             
             if len(pair_drug_interactions) > 0:
-                # Use mean interaction score for this pair
+                #use mean interaction score for this pair
                 score = pair_drug_interactions["interaction_score"].mean()
             else:
                 score = 0
@@ -347,7 +333,7 @@ def plot_drug_scores_across_pairs(candidates_df, interactions_df, pair_names, ou
 
 
 def export_per_pair_tables(candidates_df, interactions_df, pair_names, output_path, top_n=10):
-    """Export per-pair drug rankings to CSV files."""
+    #export per-pair drug rankings to CSV files
     summary_rows = []
     
     for pair_name in pair_names:
@@ -356,12 +342,12 @@ def export_per_pair_tables(candidates_df, interactions_df, pair_names, output_pa
         if pair_candidates is None or len(pair_candidates) == 0:
             continue
         
-        # Save per-pair CSV
+        #save per-pair CSV
         output_file = output_path / f"pair_{pair_name.replace(' ', '_').replace('|', '_')}_top_drugs.csv"
         pair_candidates.head(top_n).to_csv(output_file, index=False)
         print(f"Saved: {output_file.name}", file=sys.stderr)
         
-        # Collect summary (top 5)
+        #collect summary (top 5)
         for rank, (_, drug_row) in enumerate(pair_candidates.head(5).iterrows(), 1):
             summary_rows.append({
                 "pair": pair_name,
@@ -378,7 +364,7 @@ def export_per_pair_tables(candidates_df, interactions_df, pair_names, output_pa
     print(f"Saved: 00_per_pair_summary.csv", file=sys.stderr)
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Per-pair/condition drug analysis")
     parser.add_argument("--input-dir", required=True, help="Input directory with drug results")
     parser.add_argument("--pair-dirs", required=True, help="Path to pair directories")
@@ -389,7 +375,7 @@ def main():
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Load data
+    #load data
     print(f"Loading drug candidates...", file=sys.stderr)
     candidates_file = Path(args.input_dir) / "05_drug_candidates_ranked.csv"
     candidates_df = pd.read_csv(candidates_file)
@@ -402,7 +388,7 @@ def main():
         sys.exit(1)
     
     print(f"Identifying pairs...", file=sys.stderr)
-    # Extract unique pairs from the hub_pairs column (pipe-separated)
+    #extract unique pairs from the hub_pairs column (pipe-separated)
     all_pairs = set()
     for pairs_str in interactions_df["hub_pairs"].fillna(""):
         if isinstance(pairs_str, str):
@@ -414,7 +400,7 @@ def main():
     pair_names = sorted(list(all_pairs))
     print(f"  Found {len(pair_names)} pairs: {', '.join(pair_names)}", file=sys.stderr)
     
-    # Generate visualizations
+    #generate visualizations
     print(f"Generating per-pair drug rankings...", file=sys.stderr)
     plot_per_pair_top_drugs(candidates_df, interactions_df, pair_names, output_path, top_n=args.top_n)
     
@@ -436,6 +422,7 @@ def main():
     print(f"  12_drug_scores_across_pairs.png - Heat map of drug scores across conditions", file=sys.stderr)
     print(f"  pair_*_top_drugs.csv - Individual CSV for each pair", file=sys.stderr)
 
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

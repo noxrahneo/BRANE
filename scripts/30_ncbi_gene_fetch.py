@@ -34,12 +34,11 @@ GENE_TYPE_MAP = {
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Fetch NCBI Gene annotations")
     parser.add_argument(
         "--input",
         required=True,
-        help="Input CSV from script 47",
+        help="Input CSV from 29_hgnc_normalization.py",
     )
     parser.add_argument("--output", required=True, help="Output annotated CSV")
     parser.add_argument("--log", required=True, help="Output log file path")
@@ -58,17 +57,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_path(path_text: str) -> Path:
-    """Resolve relative/absolute paths consistently."""
+    #resolve relative/absolute path
     return Path(path_text).expanduser().resolve()
 
 
 def ensure_parent_dir(path: Path) -> None:
-    """Ensure parent directory exists."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_api_key(arg_api_key: str | None) -> tuple[str | None, bool]:
-    """Return API key from arg/env and indicate if available."""
+    #return api key from arg or NCBI_API_KEY env var, and whether one was found
     key = arg_api_key or os.getenv("NCBI_API_KEY")
     if key is not None:
         key = key.strip()
@@ -78,21 +76,21 @@ def get_api_key(arg_api_key: str | None) -> tuple[str | None, bool]:
 
 
 def chunked(items: list[int], size: int) -> list[list[int]]:
-    """Split list into fixed-size chunks."""
+    #split list into fixed-size chunks
     if size <= 0:
         raise ValueError("batch-size must be positive")
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
 def safe_text(elem: ET.Element | None, default: str = "") -> str:
-    """Return stripped text from XML element or default."""
+    #return stripped text from xml element or default
     if elem is None or elem.text is None:
         return default
     return elem.text.strip()
 
 
 def first_text(root: ET.Element, paths: list[str]) -> str:
-    """Try multiple XPath-like paths and return first non-empty text."""
+    #try multiple xpath-like paths and return first non-empty text
     for path in paths:
         node = root.find(path)
         text = safe_text(node)
@@ -102,7 +100,7 @@ def first_text(root: ET.Element, paths: list[str]) -> str:
 
 
 def parse_gene_type(gene_elem: ET.Element) -> str:
-    """Parse NCBI gene type from Entrezgene_type/@value."""
+    #parse ncbi gene type from Entrezgene_type/@value
     node = gene_elem.find(".//Entrezgene_type")
     if node is None:
         return ""
@@ -113,10 +111,9 @@ def parse_gene_type(gene_elem: ET.Element) -> str:
 
 
 def parse_go_terms(gene_elem: ET.Element) -> tuple[str, str, str]:
-    """Parse GO IDs, term names and categories from NCBI XML."""
+    #parse go ids, term names, and categories from ncbi xml gene-commentary sections
     tuples: set[tuple[str, str, str]] = set()
 
-    # Find all GeneOntology sections.
     for go_root in gene_elem.findall(".//Gene-commentary"):
         heading = safe_text(go_root.find("Gene-commentary_heading"))
         if heading.lower() != "geneontology":
@@ -159,7 +156,7 @@ def parse_go_terms(gene_elem: ET.Element) -> tuple[str, str, str]:
 
 
 def parse_omim_ids(gene_elem: ET.Element) -> str:
-    """Parse OMIM(MIM) IDs from Dbtag sections."""
+    #parse omim/mim ids from dbtag sections
     omim: set[str] = set()
     for dbtag in gene_elem.findall(".//Dbtag"):
         db_name = safe_text(dbtag.find("Dbtag_db"))
@@ -176,7 +173,7 @@ def parse_omim_ids(gene_elem: ET.Element) -> str:
 def parse_gene_record(
     gene_elem: ET.Element,
 ) -> tuple[str, dict[str, str]] | None:
-    """Parse one Entrezgene XML record into annotation dictionary."""
+    #parse one Entrezgene xml record into annotation dict keyed by entrez_id
     entrez_id = first_text(
         gene_elem,
         [
@@ -241,7 +238,7 @@ def fetch_batch_xml(
     batch_index: int,
     total_batches: int,
 ) -> str | None:
-    """Fetch one NCBI efetch XML batch with one retry on failure."""
+    #fetch one ncbi efetch xml batch with one retry on failure
     id_text = ",".join([str(x) for x in batch_ids])
     params = {
         "db": "gene",
@@ -279,7 +276,7 @@ def fetch_batch_xml(
 def parse_batch_xml(
     xml_text: str,
 ) -> tuple[dict[str, dict[str, str]], list[str]]:
-    """Parse efetch XML payload into per-entrez annotations."""
+    #parse efetch xml payload into per-entrez annotations and list of malformed ids
     result: dict[str, dict[str, str]] = {}
     malformed_ids: list[str] = []
 
@@ -306,7 +303,7 @@ def parse_batch_xml(
 
 
 def build_empty_annotation() -> dict[str, str]:
-    """Return empty annotation columns."""
+    #return empty annotation dict for genes with no ncbi record
     return {
         "ncbi_symbol": "",
         "full_name": "",
@@ -321,10 +318,10 @@ def build_empty_annotation() -> dict[str, str]:
     }
 
 
-def main() -> None:
-    """Run NCBI Gene annotation workflow."""
+def main() -> int:
     args = parse_args()
 
+    #resolve paths
     input_path = resolve_path(args.input)
     output_path = resolve_path(args.output)
     log_path = resolve_path(args.log)
@@ -347,7 +344,7 @@ def main() -> None:
     print(f"[NCBI] API key: {'found' if has_key else 'not found'}")
     print(f"[NCBI] Rate limit sleep: {sleep_seconds}s between batches")
 
-    # Separate genes with and without Entrez IDs.
+    #separate genes with and without entrez ids
     has_entrez_mask = df_in["entrez_id"].notna() & (
         df_in["entrez_id"].astype(str).str.strip() != ""
     )
@@ -360,7 +357,7 @@ def main() -> None:
     print(f"[NCBI] With entrez_id: {len(has_entrez_df)}")
     print(f"[NCBI] Without entrez_id: {len(no_entrez_df)}")
 
-    # Prepare Entrez IDs for querying.
+    #prepare unique entrez ids and batch them
     query_ids: list[int] = []
     gene_by_entrez: dict[str, list[str]] = {}
     for _, row in has_entrez_df.iterrows():
@@ -380,7 +377,7 @@ def main() -> None:
     failed_ids: set[str] = set()
     successful_batch_count = 0
 
-    # Batch fetch loop.
+    #batch fetch loop
     total_batches = len(batches)
     print(f"[NCBI] Total batches: {total_batches}")
     for i, batch in enumerate(batches, start=1):
@@ -409,8 +406,8 @@ def main() -> None:
         )
         time.sleep(sleep_seconds)
 
+    #merge annotations back to all input rows
     fetched_ids = set(fetched_annotations.keys())
-    # Merge annotations back to all input rows.
     rows_out: list[dict[str, Any]] = []
     no_record_genes: list[str] = []
     fetch_failed_genes: list[str] = []
@@ -462,7 +459,7 @@ def main() -> None:
 
     df_out = pd.DataFrame(rows_out)
 
-    # Validation checks.
+    #validate row count and required columns
     if len(df_out) != len(df_in):
         raise AssertionError(
             "Output row count differs from input row count."
@@ -479,12 +476,12 @@ def main() -> None:
     if success_rate < 90.0:
         print("[warn] Fetch success rate below 90%.")
 
-    # Coverage stats.
+    #coverage stats
     empty_summary_n = int((df_out["summary"].fillna("") == "").sum())
     no_go_n = int((df_out["go_ids"].fillna("") == "").sum())
     no_omim_n = int((df_out["omim_ids"].fillna("") == "").sum())
 
-    # Write output.
+    #write output csv
     ensure_parent_dir(output_path)
     output_cols_input = [
         "gene",
@@ -516,7 +513,7 @@ def main() -> None:
     df_out.to_csv(output_path, index=False)
     print(f"[NCBI] Wrote output CSV: {output_path}")
 
-    # Write log.
+    #write log
     ensure_parent_dir(log_path)
     log_lines: list[str] = []
     log_lines.append(
@@ -575,11 +572,12 @@ def main() -> None:
 
     log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
     print(f"[NCBI] Wrote log: {log_path}")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
     except Exception as exc:  # noqa: BLE001
         print(f"[NCBI][error] {exc}", file=sys.stderr)
         raise

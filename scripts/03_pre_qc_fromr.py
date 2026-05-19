@@ -26,6 +26,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    #add repo root to sys.path so utils packages resolve correctly
     repo_root = Path(__file__).resolve().parents[1]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -44,12 +46,14 @@ def main() -> int:
         load_matrix_and_barcodes,
     )
 
+    #resolve paths and create output dir
     cohort_path = (repo_root / args.cohort).resolve()
     data_dir = (repo_root / args.data_dir).resolve()
     features_path = (repo_root / args.features).resolve()
     out_dir = (repo_root / args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #load and subset cohort
     if not cohort_path.exists():
         print(f"ERROR: cohort file not found: {cohort_path}")
         return 1
@@ -62,10 +66,12 @@ def main() -> int:
         print(f"ERROR: no samples for condition='{args.condition}'")
         return 1
 
+    #load shared gene name list from features file
     gene_names = load_features(features_path)["gene_name"]
     summary_rows: list[dict] = []
     per_cell_parts: list[pd.DataFrame] = []
 
+    #compute pre-filter qc metrics for each sample
     total = len(cohort)
     for pos, row in enumerate(cohort.itertuples(index=False), start=1):
         sample_name = str(row.SampleName)
@@ -95,9 +101,11 @@ def main() -> int:
         print("ERROR: no samples were processed")
         return 1
 
+    #concatenate results across samples
     summary_df = pd.DataFrame(summary_rows)
     per_cell_df = pd.concat(per_cell_parts, ignore_index=True)
 
+    #save summary csv, per-cell table, and qc plots
     summary_file = out_dir / "pre_qc_summary.csv"
     summary_df.to_csv(summary_file, index=False)
     per_cell_file = save_per_cell_table(per_cell_df, out_dir, "pre_qc")

@@ -125,8 +125,7 @@ def load_obs_tables(
 ) -> pd.DataFrame:
     chunks: list[pd.DataFrame] = []
     for condition in conditions:
-        # R workflow equivalent: build a cell-count table stratified by
-        # sample and cluster/cell type before quasi-Poisson modeling.
+        #load obs table and filter to samples meeting minimum cell count
         h5ad = root / condition / f"{condition}_annotated.h5ad"
         if not h5ad.exists():
             print(f"Skipping {condition}: missing {h5ad.name}")
@@ -185,10 +184,7 @@ def build_count_table(obs: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 def fit_composition_glm(
     counts: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # R equivalent model form:
-    # count ~ cluster/cell_group + patient(sample) +
-    # condition:cluster interaction.
-    # We use Poisson GLM with Pearson scale (quasi-Poisson style).
+    #quasi-poisson glm: count ~ cell_group + sample + condition:cell_group
     try:
         import statsmodels.api as sm
         import statsmodels.formula.api as smf
@@ -219,8 +215,7 @@ def fit_composition_glm(
     df_diff = max(int(full.df_model - reduced.df_model), 1)
     df_resid = int(full.df_resid)
     scale = float(full.scale)
-    # Quasi-Poisson F-test following Pal et al. (2021):
-    # F = (LR / df_diff) / scale, compared to F(df_diff, df_resid)
+    #quasi-poisson f-test: F = (LR / df_diff) / scale vs F(df_diff, df_resid)
     f_stat = (lr / df_diff) / scale
     pval = float(f_dist.sf(f_stat, df_diff, df_resid))
 
@@ -293,10 +288,13 @@ def plot_condition_composition(
 
 def main() -> int:
     args = parse_args()
+
+    #resolve input annotation root and output dir
     root = resolve_annotation_root(args.input_dir)
     out_dir = resolve_base(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    #list available conditions and exit if requested
     available = list_conditions(root)
     if args.list_conditions:
         if not available:
@@ -307,6 +305,7 @@ def main() -> int:
             print(f"- {name}")
         return 0
 
+    #resolve target conditions and load obs tables
     conditions = resolve_conditions(root, args.condition)
     arg_hash = params_hash(vars(args))
     now = utc_now_iso()
@@ -320,11 +319,12 @@ def main() -> int:
     if obs.empty:
         raise ValueError("No valid annotated cells found for composition test")
 
+    #build count and proportion tables, then fit glm
     counts, prop = build_count_table(obs)
-    # Global test answers:
-    # "Do compositions differ between conditions overall?"
+    #fit global glm: does composition differ between conditions?
     global_df, coef_df = fit_composition_glm(counts)
 
+    #save all outputs
     counts_file = out_dir / "composition_counts_long.csv"
     prop_file = out_dir / "composition_proportions_by_sample.csv"
     global_file = out_dir / "composition_glm_global_test.csv"
@@ -337,6 +337,7 @@ def main() -> int:
     coef_df.to_csv(coef_file, index=False)
     plot_condition_composition(prop=prop, out_file=fig_file, dpi=args.dpi)
 
+    #append provenance to warehouse log
     records = [
         WarehouseRecord(
             input_file=str(root / condition / f"{condition}_annotated.h5ad"),

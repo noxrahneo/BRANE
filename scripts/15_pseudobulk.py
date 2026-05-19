@@ -648,30 +648,19 @@ def _build_condition_pseudobulk(
     pd.DataFrame,
     str,
 ]:
-    """Build one-condition pseudobulk, mirroring decoupler tutorial steps.
-
-    Steps:
-    1) Load annotated single-cell object.
-    2) Move raw counts to X (if layer exists).
-    3) Aggregate counts with decoupler pseudobulk.
-    4) Filter low-quality pseudobulk profiles.
-    5) Build export-ready metadata and count matrix.
-    """
     dc = _import_decoupler()
 
-    # Step 1: load condition-level annotated single-cell data.
+    #load annotated single-cell data and validate required obs columns
     adata = ad.read_h5ad(h5ad_file)
     required = [sample_col, group_col]
     missing = [col for col in required if col not in adata.obs.columns]
     if missing:
-        raise ValueError(
-            f"Missing required obs columns in {h5ad_file.name}: {missing}"
-        )
+        raise ValueError(f"Missing required obs columns in {h5ad_file.name}: {missing}")
 
-    # Step 2: ensure X contains the matrix used for aggregation.
+    #set X to the requested count layer
     matrix_layer = _set_x_from_layer(adata, layer)
 
-    # Step 3: tutorial core operation (sample x group pseudobulk).
+    #aggregate per sample x cell-type via decoupler pseudobulk
     pdata_raw = dc.pp.pseudobulk(
         adata=adata,
         sample_col=sample_col,
@@ -679,7 +668,7 @@ def _build_condition_pseudobulk(
         mode=mode,
     )
 
-    # Step 4: choose thresholds from psbulk metrics, then filter.
+    #choose thresholds from psbulk metrics, then filter low-quality profiles
     if threshold_mode == "auto":
         chosen_cells, chosen_counts, sweep_df, threshold_reason = (
             _select_auto_thresholds(
@@ -743,7 +732,7 @@ def _build_condition_pseudobulk(
     if condition_col not in pdata.obs.columns:
         pdata.obs[condition_col] = condition_name
 
-    # Step 5: build standardized metadata + expression tables.
+    #build standardized metadata and count tables
     meta_df = _profile_metadata(
         pdata=pdata,
         condition_name=condition_name,
@@ -785,34 +774,32 @@ def normalize_logcpm(
     return np.log1p(norm)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and parse auto-threshold quantiles
     in_root = resolve_base(args.input_dir)
     out_root = resolve_base(args.output_dir)
     auto_quantiles = _parse_quantiles(args.auto_quantiles)
 
+    #list available conditions and exit if requested
     available = list_conditions(in_root)
     if args.list_conditions:
         if not available:
             print("No conditions found.")
         else:
             print("\n".join(available))
-        return
+        return 0
 
+    #resolve target conditions
     conditions = resolve_conditions(in_root, args.condition)
     out_root.mkdir(parents=True, exist_ok=True)
 
     counts_all: list[pd.DataFrame] = []
     meta_all: list[pd.DataFrame] = []
 
+    #run per-condition pseudobulk: aggregate, filter, plot, export
     for condition in conditions:
-        # ---------------------------------------------------------------
-        # Tutorial-style per-condition pseudobulk workflow:
-        #   A) Load + aggregate (sample x cell type)
-        #   B) Filter low-quality pseudobulk profiles
-        #   C) Plot QC and variability diagnostics
-        #   D) Export counts/logCPM/metadata/h5ad
-        # ---------------------------------------------------------------
         source_h5ad = find_annotation_h5ad(in_root / condition)
         (
             pdata_raw,
@@ -962,12 +949,9 @@ def main() -> None:
         summary_file = out_root / f"{prefix}_pseudobulk_summary.csv"
         run_summary.to_csv(summary_file, index=False)
 
-        # Keep backward compatibility for users expecting the old summary name.
+        #write canonical summary name expected by downstream scripts
         if is_all_run:
-            run_summary.to_csv(
-                out_root / "pseudobulk_summary.csv",
-                index=False,
-            )
+            run_summary.to_csv(out_root / "pseudobulk_summary.csv", index=False)
 
         stage_dir = out_root.parent
         script_rel = str(Path(__file__).resolve().relative_to(REPO_ROOT))
@@ -978,19 +962,16 @@ def main() -> None:
             date_utc=utc_now_iso(),
             params_hash=params_hash(vars(args)),
             condition=args.condition,
-            stage="07_network_pseudobulk",
+            stage="pseudobulk",
         )
         append_warehouse(stage_dir, [record])
 
-        print(
-            f"Wrote combined outputs ({prefix}) to: {out_root}"
-        )
+        print(f"Wrote combined outputs ({prefix}) to: {out_root}")
     else:
-        print(
-            "No outputs generated. "
-            "Check filters and input annotation files."
-        )
+        print("No outputs generated. Check filters and input annotation files.")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

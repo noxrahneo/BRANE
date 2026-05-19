@@ -184,7 +184,7 @@ def plot_heatmap(
     sub = corr[np.ix_(idx, idx)]
     sub_genes = [genes[i] for i in idx]
 
-    # Dynamic canvas sizing for readability on dense gene labels.
+    #dynamic canvas sizing for readability on dense gene labels
     side = float(np.clip(0.30 * n + 14.0, 24.0, 56.0))
     fig, ax = plt.subplots(figsize=(side, side))
     im = ax.imshow(sub, cmap="coolwarm", vmin=-1, vmax=1, aspect="auto")
@@ -300,8 +300,10 @@ def plot_cross_condition_summary(summary_df: pd.DataFrame, out_file: Path) -> No
     plt.close(fig)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and parse heatmap top-n list
     in_root = resolve_base(args.input_dir)
     cond_dirs = resolve_conditions(in_root, args.condition)
     top_list = parse_top_list(args.heatmap_top_list, args.heatmap_top_genes)
@@ -316,10 +318,9 @@ def main() -> None:
         corr_file = cdir / f"{condition}_pearson_corr.npz"
 
         if not summary_file.exists() or not corr_file.exists():
-            raise FileNotFoundError(
-                f"Missing required files for {condition}: {summary_file} or {corr_file}"
-            )
+            raise FileNotFoundError(f"Missing required files for {condition}: {summary_file} or {corr_file}")
 
+        #load correlation matrix, genes, and edge list
         summary = pd.read_csv(summary_file).iloc[0]
         all_summary.append(summary)
 
@@ -329,91 +330,67 @@ def main() -> None:
 
         edges_glob = sorted(cdir.glob(f"{condition}_edges_abs_ge_*.csv"))
         edges_df = pd.read_csv(edges_glob[0]) if edges_glob else pd.DataFrame()
-
         vals = sample_offdiag(corr, args.max_sample_pairs)
 
+        #create output dirs and generate plots
         fig_dir = cdir / "figures"
         heat_dir = fig_dir / "heatmaps"
         fig_dir.mkdir(parents=True, exist_ok=True)
         heat_dir.mkdir(parents=True, exist_ok=True)
-        dist_file = fig_dir / f"{condition}_corr_distribution.png"
-        deg_file = fig_dir / f"{condition}_edge_degree_distribution.png"
-        panel_file = fig_dir / f"{condition}_corr_qc_panel.png"
 
-        plot_distribution(vals, dist_file)
+        plot_distribution(vals, fig_dir / f"{condition}_corr_distribution.png")
+
+        #top-n heatmaps by mean |r| connectivity
         for top_n in top_list:
-            heat_file = heat_dir / f"{condition}_corr_top{top_n}_heatmap.png"
-            plot_heatmap(
-                corr,
-                genes,
-                top_n,
-                heat_file,
-                label_fontsize=args.heatmap_label_fontsize,
-                title_fontsize=args.heatmap_title_fontsize,
-            )
+            plot_heatmap(corr, genes, top_n, heat_dir / f"{condition}_corr_top{top_n}_heatmap.png",
+                         label_fontsize=args.heatmap_label_fontsize, title_fontsize=args.heatmap_title_fontsize)
 
-        # Unbiased random-gene heatmap.
+        #unbiased random-gene heatmap
         random_n = min(int(args.random_heatmap_size), corr.shape[0])
         if random_n >= 2:
             rng = np.random.default_rng(args.random_seed + cond_ix)
             idx_rand = np.sort(rng.choice(corr.shape[0], size=random_n, replace=False))
-            rand_file = heat_dir / f"{condition}_corr_random{random_n}_heatmap.png"
-            plot_heatmap_from_indices(
-                corr=corr,
-                genes=genes,
-                idx=idx_rand,
-                out_file=rand_file,
-                title=f"Random {random_n} genes (unbiased view)",
-                label_fontsize=args.heatmap_label_fontsize,
-                title_fontsize=args.heatmap_title_fontsize,
-            )
+            plot_heatmap_from_indices(corr=corr, genes=genes, idx=idx_rand,
+                                      out_file=heat_dir / f"{condition}_corr_random{random_n}_heatmap.png",
+                                      title=f"Random {random_n} genes (unbiased view)",
+                                      label_fontsize=args.heatmap_label_fontsize, title_fontsize=args.heatmap_title_fontsize)
 
-        # Top-variance gene heatmap (from normalized per-condition matrix).
+        #top-variance gene heatmap from normalized h5ad
         var_n = int(args.variance_heatmap_size)
         h5ad_file = norm_root / f"{condition}_pseudobulk_logcpm.h5ad"
         if h5ad_file.exists() and var_n >= 2:
             try:
                 import anndata as ad
-
                 pdata = ad.read_h5ad(h5ad_file)
                 x = np.asarray(pdata.X, dtype=np.float64)
                 var_genes = pdata.var_names.astype(str).tolist()
                 if x.shape[1] == corr.shape[0] and var_genes == genes:
                     v = np.var(x, axis=0)
-                    idx_var = np.argsort(v)[-min(var_n, v.shape[0]) :]
-                    var_file = heat_dir / f"{condition}_corr_topvar{len(idx_var)}_heatmap.png"
-                    plot_heatmap_from_indices(
-                        corr=corr,
-                        genes=genes,
-                        idx=idx_var,
-                        out_file=var_file,
-                        title=f"Top {len(idx_var)} genes by variance",
-                        label_fontsize=args.heatmap_label_fontsize,
-                        title_fontsize=args.heatmap_title_fontsize,
-                    )
+                    idx_var = np.argsort(v)[-min(var_n, v.shape[0]):]
+                    plot_heatmap_from_indices(corr=corr, genes=genes, idx=idx_var,
+                                              out_file=heat_dir / f"{condition}_corr_topvar{len(idx_var)}_heatmap.png",
+                                              title=f"Top {len(idx_var)} genes by variance",
+                                              label_fontsize=args.heatmap_label_fontsize, title_fontsize=args.heatmap_title_fontsize)
                 else:
-                    print(
-                        f"[warn] {condition}: variance heatmap skipped due to gene order/shape mismatch"
-                    )
+                    print(f"[warn] {condition}: variance heatmap skipped due to gene order/shape mismatch")
             except Exception as exc:
                 print(f"[warn] {condition}: variance heatmap skipped ({exc})")
-        plot_degree_from_edges(edges_df, deg_file)
-        plot_summary_panel(summary, panel_file)
 
-        records.append(
-            WarehouseRecord(
-                input_file=str(corr_file),
-                output_file=str(panel_file),
-                script=str(Path(__file__).resolve().relative_to(REPO_ROOT)),
-                date_utc=utc_now_iso(),
-                params_hash=params_hash(vars(args)),
-                condition=condition,
-                stage="08_correlation_qc",
-            )
-        )
+        plot_degree_from_edges(edges_df, fig_dir / f"{condition}_edge_degree_distribution.png")
+        plot_summary_panel(summary, fig_dir / f"{condition}_corr_qc_panel.png")
 
+        records.append(WarehouseRecord(
+            input_file=str(corr_file),
+            output_file=str(fig_dir / f"{condition}_corr_qc_panel.png"),
+            script=str(Path(__file__).resolve().relative_to(REPO_ROOT)),
+            date_utc=utc_now_iso(),
+            params_hash=params_hash(vars(args)),
+            condition=condition,
+            stage="correlation_qc",
+        ))
         print(f"[{condition}] wrote correlation QC figures to {fig_dir}")
 
+    #write cross-condition summary plot and warehouse log
     if all_summary:
         cross_df = pd.DataFrame(all_summary)
         cross_file = in_root / "correlation_qc_cross_condition.png"
@@ -422,7 +399,8 @@ def main() -> None:
 
     append_warehouse(in_root, records)
     print(f"Done. Correlation QC outputs in {in_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

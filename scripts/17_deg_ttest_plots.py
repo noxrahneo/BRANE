@@ -146,7 +146,7 @@ def plot_volcano(
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", color="#e5e7eb", linewidth=0.5, zorder=0)
 
-    # Label top genes: pick separately from up and down by FDR then |FC|
+    #label top genes: pick separately from up and down by fdr then |fc|
     if int(label_top_n) > 0:
         half = max(1, int(label_top_n) // 2)
         work = df.copy()
@@ -296,62 +296,50 @@ def plot_volcano_panel(out_root: Path, panel_file: Path) -> None:
     plt.close(fig)
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
+
+    #resolve paths and create output root
     in_root = resolve_base(args.input_dir)
     out_root = resolve_base(args.output_dir)
     out_root.mkdir(parents=True, exist_ok=True)
 
+    #find all contrast directories
     cdirs = list_contrast_dirs(in_root)
     if not cdirs:
         raise FileNotFoundError(f"No contrast directories found in {in_root}")
 
+    #generate per-contrast volcano, ma, and p-value histogram plots
     for cdir in cdirs:
         contrast = cdir.name
         df = load_stats(cdir)
-
         fig_dir = out_root / contrast
         fig_dir.mkdir(parents=True, exist_ok=True)
 
-        plot_volcano(
-            df=df,
-            contrast=contrast,
-            out_file=fig_dir / f"{contrast}_volcano.png",
-            fdr_threshold=float(args.fdr_threshold),
-            min_abs_log2fc=float(args.min_abs_log2fc),
-            label_top_n=int(args.label_top_n),
-        )
-        plot_ma(
-            df=df,
-            contrast=contrast,
-            out_file=fig_dir / f"{contrast}_ma_plot.png",
-            fdr_threshold=float(args.fdr_threshold),
-            min_abs_log2fc=float(args.min_abs_log2fc),
-        )
-        plot_pvalue_hist(
-            df=df,
-            contrast=contrast,
-            out_file=fig_dir / f"{contrast}_pvalue_hist.png",
-        )
-
+        plot_volcano(df=df, contrast=contrast, out_file=fig_dir / f"{contrast}_volcano.png",
+                     fdr_threshold=float(args.fdr_threshold), min_abs_log2fc=float(args.min_abs_log2fc),
+                     label_top_n=int(args.label_top_n))
+        plot_ma(df=df, contrast=contrast, out_file=fig_dir / f"{contrast}_ma_plot.png",
+                fdr_threshold=float(args.fdr_threshold), min_abs_log2fc=float(args.min_abs_log2fc))
+        plot_pvalue_hist(df=df, contrast=contrast, out_file=fig_dir / f"{contrast}_pvalue_hist.png")
         print(f"[{contrast}] wrote DEG plots to {fig_dir}")
 
+    #optional cross-contrast summary bar chart
     summary_file = in_root / "deg_contrast_summary.csv"
     if summary_file.exists():
         summary_df = pd.read_csv(summary_file)
-        plot_deg_count_summary(
-            summary_df=summary_df,
-            out_file=out_root / "deg_count_summary.png",
-        )
+        plot_deg_count_summary(summary_df=summary_df, out_file=out_root / "deg_count_summary.png")
         print(f"Wrote summary plot: {out_root / 'deg_count_summary.png'}")
     else:
         print(f"[warn] missing summary file: {summary_file}")
 
+    #assemble multi-contrast volcano panel
     panel_file = out_root / "deg_volcano_panel.png"
     plot_volcano_panel(out_root, panel_file)
     print(f"Wrote volcano panel: {panel_file}")
     print(f"Done. DEG figures: {out_root}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
