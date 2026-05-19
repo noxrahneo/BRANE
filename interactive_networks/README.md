@@ -21,8 +21,7 @@ Edges displayed use a stricter visual threshold (mean + 1 SD of permutation maxi
 
 **Edge colours** reflect CSD tier:
 - Blue — Conserved (C): co-expression present in both conditions
-- Green — Specific-case (S_case): co-expression gained in the case condition
-- Teal — Specific-control (S_ctrl): co-expression lost from the control condition
+- Green — Specific-case (S_case, S_ctrl): co-expression gained in the case condition, co-expression lost from the control condition
 - Red — Differentiated (D): co-expression rewired between conditions
 
 **Node border colours** indicate annotated cell type (Epithelial, Fibroblast, Myeloid, BCell, TCell, NK, Cycling, etc.).
